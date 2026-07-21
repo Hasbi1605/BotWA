@@ -88,7 +88,7 @@ export function renderSummary(input: RenderSummaryInput): string {
 
   if (output?.highlights?.length > 0) {
     const lines = [roast ? '✨ *Yang rame*' : '✨ *Sorotan*'];
-    for (const h of output.highlights.slice(0, 8)) {
+    for (const h of output.highlights.slice(0, 12)) {
       lines.push(`• ${R(h.text)}`);
     }
     sections.push(lines.join('\n'));
@@ -96,7 +96,7 @@ export function renderSummary(input: RenderSummaryInput): string {
 
   if (output?.important_messages?.length > 0) {
     const lines = ['📌 *Pesan penting*'];
-    for (const m of output.important_messages.slice(0, 6)) {
+    for (const m of output.important_messages.slice(0, 10)) {
       const who = nameOf(m.speaker_alias, rev);
       lines.push(`• *${who}:* _"${R(m.quote)}"_`);
     }
@@ -105,7 +105,7 @@ export function renderSummary(input: RenderSummaryInput): string {
 
   if (output?.decisions?.length > 0) {
     const lines = ['✅ *Keputusan*'];
-    for (const d of output.decisions) {
+    for (const d of output.decisions.slice(0, 15)) {
       const status =
         d.status === 'tentative'
           ? ' _(sementara)_'
@@ -119,7 +119,7 @@ export function renderSummary(input: RenderSummaryInput): string {
 
   if (output?.tasks?.length > 0) {
     const lines = ['☑️ *Tugas / PR*'];
-    for (const t of output.tasks) {
+    for (const t of output.tasks.slice(0, 20)) {
       let taskText = `• ${R(t.text)}`;
       if (t.assignee_alias) taskText += ` — _${nameOf(t.assignee_alias, rev)}_`;
       lines.push(taskText);
@@ -129,7 +129,7 @@ export function renderSummary(input: RenderSummaryInput): string {
 
   if (output?.schedule_candidates?.length > 0) {
     const lines = ['🗓️ *Jadwal* _(otomatis + pengingat)_'];
-    for (const s of output.schedule_candidates) {
+    for (const s of output.schedule_candidates.slice(0, 12)) {
       let schedText = `• *${R(s.title)}*`;
       if (s.date) schedText += `\n  ${s.date}`;
       if (s.time) schedText += ` ${s.time}`;
@@ -147,7 +147,7 @@ export function renderSummary(input: RenderSummaryInput): string {
   const allDocs = [...docsFromModel.map(R), ...documentLines];
   if (allDocs.length > 0) {
     const lines = ['📄 *Dokumen*'];
-    for (const doc of allDocs.slice(0, 6)) {
+    for (const doc of allDocs.slice(0, 8)) {
       lines.push(`• ${doc}`);
     }
     sections.push(lines.join('\n'));
@@ -155,7 +155,7 @@ export function renderSummary(input: RenderSummaryInput): string {
 
   if (output?.open_questions?.length > 0) {
     const lines = ['❓ *Pertanyaan terbuka*'];
-    for (const q of output.open_questions) {
+    for (const q of output.open_questions.slice(0, 15)) {
       lines.push(`• ${R(typeof q === 'string' ? q : String(q))}`);
     }
     sections.push(lines.join('\n'));
@@ -163,7 +163,7 @@ export function renderSummary(input: RenderSummaryInput): string {
 
   if (output?.links?.length > 0) {
     const lines = ['🔗 *Link*'];
-    for (const link of output.links.slice(0, 10)) {
+    for (const link of output.links.slice(0, 12)) {
       const who = nameOf(link.sender_alias, rev);
       lines.push(who ? `• *${who}:* ${link.url}` : `• ${link.url}`);
     }
