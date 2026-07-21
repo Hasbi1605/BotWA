@@ -6,8 +6,10 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { join } from 'path';
+import { mkdirSync, writeFileSync } from 'fs';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import type { Config } from '../config/index.js';
 import { handleMessage } from './message-handler.js';
 
@@ -16,6 +18,24 @@ const logger = pino({ name: 'whatsapp' });
 let sock: WASocket | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
+
+async function persistQr(config: Config, qr: string): Promise<void> {
+  try {
+    mkdirSync(config.tempDir, { recursive: true });
+    const txtPath = join(config.tempDir, 'wa-qr.txt');
+    const pngPath = join(config.tempDir, 'wa-qr.png');
+    writeFileSync(txtPath, qr, 'utf8');
+    await QRCode.toFile(pngPath, qr, {
+      type: 'png',
+      width: 512,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    });
+    logger.info({ pngPath, txtPath }, 'QR image written for pairing');
+  } catch (err) {
+    logger.warn({ err }, 'Failed to persist QR image');
+  }
+}
 
 export async function connectWhatsApp(config: Config): Promise<WASocket> {
   const authDir = join(config.waAuthDir, 'session');
@@ -37,8 +57,9 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      logger.info('QR code received, scan with WhatsApp');
+      logger.info('QR code received, scan with WhatsApp Linked Devices');
       qrcode.generate(qr, { small: true });
+      void persistQr(config, qr);
     }
 
     if (connection === 'close') {
