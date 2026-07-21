@@ -33,7 +33,7 @@ class SensitivityResult:
 
 
 class SensitivityScanner:
-    """Scans PDF text for sensitive data patterns before sending to AI."""
+    """Scans document text for sensitive data patterns; redacts instead of blocking."""
 
     def scan(self, text: str) -> SensitivityResult:
         findings = []
@@ -53,8 +53,16 @@ class SensitivityScanner:
             is_sensitive=is_sensitive,
             findings=findings,
             summary=(
-                f"Ditemukan {len(findings)} pola data sensitif"
+                f"Ditemukan {len(findings)} pola data sensitif (disamarkan)"
                 if is_sensitive
                 else "Tidak ada data sensitif terdeteksi"
             ),
         )
+
+    def redact(self, text: str) -> tuple[str, SensitivityResult]:
+        """Return text with sensitive spans replaced by [DISAMARKAN: label]."""
+        result = self.scan(text)
+        redacted = text
+        for pattern, label in SENSITIVE_PATTERNS:
+            redacted = re.sub(pattern, f"[DISAMARKAN:{label}]", redacted)
+        return redacted, result

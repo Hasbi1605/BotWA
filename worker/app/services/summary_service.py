@@ -48,6 +48,15 @@ Pesan akan diberikan dalam format:
 
 Balikkan HANYA JSON, tanpa markdown code block."""
 
+SUMMARY_ROAST_ADDON = """
+
+MODE ROAST (aktif):
+- narrative & highlights: gaya santai, sarkas ringan, lucu seperti teman grup — BUKAN bully
+- Tetap akurat: jangan mengarang keputusan/tugas
+- Jangan SARA, jangan serang fisik/mental, jangan sebut data sensitif
+- Boleh guyon ringan soal kebiasaan chat (mis. sering bilang "siap" doang)
+"""
+
 
 class SummaryService:
     def __init__(self):
@@ -74,6 +83,10 @@ class SummaryService:
 
         # Build context for AI
         context = self._build_context(processed, request.window)
+        mode = (getattr(request, "mode", None) or "normal").lower()
+        system_prompt = SUMMARY_SYSTEM_PROMPT
+        if mode == "roast":
+            system_prompt = SUMMARY_SYSTEM_PROMPT + SUMMARY_ROAST_ADDON
 
         # Try provider cascade
         last_error = None
@@ -81,7 +94,7 @@ class SummaryService:
             try:
                 result = await self.cascade.call(
                     route=route,
-                    system_prompt=SUMMARY_SYSTEM_PROMPT,
+                    system_prompt=system_prompt,
                     user_content=context,
                     response_format={"type": "json_object"},
                 )

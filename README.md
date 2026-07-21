@@ -54,25 +54,27 @@ docker compose up --build -d
 docker compose logs -f gateway
 ```
 
-### Cara pakai (bahasa natural)
+### Cara pakai (autopilot)
 
-**Anggota:** chat biasa saja — tidak perlu perintah.
+**Anggota:** chat biasa saja — **tidak** perlu (dan tidak bisa) minta apa pun.
 
-**Admin grup** (contoh frasa):
+**Bot otomatis:**
+- Ringkasan 2× sehari (08.00 & 20.00 WIB)
+- Baca **PDF/Word** yang dikirim → ringkas langsung di grup
+- Deteksi jadwal → catat + pengingat (H-1 & 2 jam sebelum)
+
+**Admin grup saja** (bot *tidak perlu* jadi admin grup):
 
 | Frasa | Fungsi |
 |---|---|
-| `aktifkan bot` lalu `YA` | Aktifkan + setuju privasi (bot harus jadi admin grup) |
-| `bantuan` | Menu singkat |
-| `admin` | Menu admin |
-| `ringkas` | Ringkasan manual sekarang |
-| `jadwal` | Lihat / setujui usulan (balas `YA` / nomor / `tidak`) |
-| `jadwal tambah "Rapat" 25-07-2026 15:00 "Balai"` | Tambah jadwal |
-| `status` / `jeda` / `lanjut` | Status & kontrol |
-| `hapus data` | Hapus data grup (butuh konfirmasi `YA`) |
-| `pdf` | Daftar PDF / izinkan yang ditahan |
+| `aktifkan bot` lalu `YA` | Aktifkan + setuju privasi |
+| `mode normal` / `mode roast` | Gaya ringkasan |
+| `ringkas` | Paksa ringkasan sekarang (opsional) |
+| `jadwal` / `jadwal batal 1` | Lihat / batalkan |
+| `jeda` / `lanjut` / `status` | Kontrol |
+| `hapus data` → `YA` | Hapus data grup |
 
-Perintah bertitik (`.aktifkan`, `.ringkas sekarang`, …) tetap didukung.
+Perintah bertitik (`.aktifkan`, …) tetap didukung.
 
 ## Pengembangan
 

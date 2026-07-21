@@ -15,46 +15,74 @@ class PdfService:
         self.sensitivity_scanner = SensitivityScanner()
 
     async def analyze(self, request) -> dict:
-        """Extract text from PDF, check sensitivity, and analyze content."""
+        """Extract text from PDF/Word, redact sensitive data, analyze, always publishable."""
         file_path = request.file_path
 
         if not os.path.exists(file_path):
             return {"error": "File not found", "status": "error"}
 
         try:
-            # Extract text
             extracted_text, page_count = self._extract_text(file_path)
 
             if not extracted_text.strip():
                 return {
                     "status": "unprocessable",
-                    "error": "No text could be extracted from PDF",
+                    "error": "No text could be extracted from document",
                 }
 
-            # Sensitivity check
-            sensitivity_result = self.sensitivity_scanner.scan(extracted_text)
-            if sensitivity_result.is_sensitive:
-                return {
-                    "status": "held",
-                    "reason": "sensitive_data",
-                    "summary": sensitivity_result.summary,
-                    "findings": [f.pattern for f in sensitivity_result.findings],
-                }
+            # Redact sensitive patterns — never block / hold for admin
+            safe_text, sensitivity_result = self.sensitivity_scanner.redact(extracted_text)
 
-            # Analyze with AI
-            analysis = await self._analyze_with_ai(extracted_text, request.metadata)
+            analysis = await self._analyze_with_ai(safe_text, request.metadata)
+            if isinstance(analysis, dict) and analysis.get("error"):
+                return {"status": "error", "error": analysis["error"]}
+
+            if isinstance(analysis, dict):
+                analysis["redacted"] = sensitivity_result.is_sensitive
+                if sensitivity_result.is_sensitive:
+                    analysis["sensitivity_note"] = sensitivity_result.summary
 
             return {
                 "status": "analyzed",
                 "page_count": page_count,
                 "analysis": analysis,
+                "redacted": sensitivity_result.is_sensitive,
             }
 
         except Exception as e:
-            logger.error("PDF processing failed", error=str(e), document_id=request.document_id)
+            logger.error("Document processing failed", error=str(e), document_id=request.document_id)
             return {"status": "error", "error": str(e)}
 
     def _extract_text(self, file_path: str) -> tuple[str, int]:
+        """Extract text from PDF or Word document."""
+        lower = file_path.lower()
+        if lower.endswith(".docx") or lower.endswith(".doc"):
+            return self._extract_word(file_path)
+        return self._extract_pdf(file_path)
+
+    def _extract_word(self, file_path: str) -> tuple[str, int]:
+        try:
+            from docx import Document  # type: ignore
+
+            doc = Document(file_path)
+            parts = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
+            # tables
+            for table in doc.tables:
+                for row in table.rows:
+                    cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            text = "\n".join(parts)
+            # page_count unknown for docx — use 1 as placeholder
+            return text, max(1, len(parts) // 40 or 1)
+        except ImportError:
+            logger.error("python-docx not installed")
+            raise RuntimeError("Word support requires python-docx")
+        except Exception as e:
+            logger.error("Word extraction failed", error=str(e))
+            raise
+
+    def _extract_pdf(self, file_path: str) -> tuple[str, int]:
         """Extract text from PDF using pdfplumber."""
         text_parts = []
         page_count = 0
@@ -95,12 +123,13 @@ class PdfService:
         """Analyze extracted text with AI provider."""
         from app.providers.cascade import ProviderCascade
 
-        system_prompt = """Analisis dokumen PDF berikut dan ekstrak informasi penting.
+        system_prompt = """Analisis dokumen (PDF/Word) berikut dan ekstrak informasi penting untuk grup KKN/desa.
+Jangan mengutip nomor identitas, rekening, atau kredensial — teks sudah disamarkan bila ada.
 
 OUTPUT FORMAT (JSON):
 {
   "title": "judul dokumen",
-  "purpose": "tujuan dokumen",
+  "purpose": "tujuan dokumen (1-2 kalimat)",
   "key_points": ["poin 1", "poin 2"],
   "decisions": ["keputusan 1"],
   "tasks": [{"text": "tugas", "assignee": "nama|null", "due": "tanggal|null"}],

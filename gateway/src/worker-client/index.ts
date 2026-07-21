@@ -6,6 +6,7 @@ const logger = pino({ name: 'worker-client' });
 interface SummaryRequest {
   group_id: number;
   window: { start: string; end: string };
+  mode?: 'normal' | 'roast';
   messages: Array<{
     id: number;
     content: string;

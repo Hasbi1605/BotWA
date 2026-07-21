@@ -79,7 +79,7 @@ describe('summary render (community-style)', () => {
     expect(text).toContain('Ayu: "Rapat jam 3 sore"');
     expect(text).toContain('*Keputusan*');
     expect(text).toContain('Bawa proyektor — Budi');
-    expect(text).toContain('*Usulan jadwal*');
+    expect(text).toContain('*Jadwal terdeteksi*');
     expect(text).toContain('*Dokumen*');
     expect(text).toContain('Proposal.pdf');
     expect(text).toContain('*Pertanyaan terbuka*');

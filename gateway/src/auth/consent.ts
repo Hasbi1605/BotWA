@@ -6,21 +6,21 @@ import { sendMessage } from '../whatsapp/outbound.js';
 /** Short onboarding when bot joins or is activated — casual Indonesian. */
 export const ONBOARDING = `Halo, saya *RembugBot* 👋
 
-Saya bantu:
-• Ringkas chat grup *2× sehari* (08.00 & 20.00 WIB)
-• Catat *jadwal* penting (admin cukup balas ya/tidak)
-• Baca *PDF* (data pribadi dilindungi)
+Saya bantu *otomatis*:
+• Ringkas chat grup 2× sehari (08.00 & 20.00 WIB)
+• Baca PDF/Word yang dikirim di grup
+• Ingatkan jadwal penting
 
-*Anggota:* tidak perlu perintah — chat biasa saja.
+*Anggota:* chat biasa saja — tidak perlu perintah.
 *Admin grup:* ketik *aktifkan bot* untuk mulai.`;
 
 export const PRIVACY_NOTICE = `🔒 *Privasi singkat*
 
-Bot akan membaca pesan di grup ini untuk membuat ringkasan & jadwal.
+Bot akan membaca pesan di grup ini untuk ringkasan, dokumen, dan jadwal.
 
 • Pesan disimpan maksimal *14 hari*
 • Nama tampilan dipakai sebagai samaran (bukan nomor HP)
-• PDF dihapus dalam *24 jam*
+• File dihapus dalam *24 jam*
 • Data *tidak* dijual ke pihak lain
 
 Admin: balas *YA* atau *setuju* untuk mengaktifkan.
@@ -28,17 +28,8 @@ Balas *tidak* untuk membatalkan.`;
 
 export async function handleActivationStart(
   sock: WASocket,
-  groupJid: string,
-  botIsAdmin: boolean
-): Promise<'privacy' | 'need_bot_admin'> {
-  if (!botIsAdmin) {
-    await sendMessage(
-      sock,
-      groupJid,
-      '⚠️ Jadikan *RembugBot sebagai admin grup* dulu, lalu ketik *aktifkan bot* lagi.\n\nTanpa admin, bot sulit membaca status admin & mengelola grup.'
-    );
-    return 'need_bot_admin';
-  }
+  groupJid: string
+): Promise<'privacy'> {
   await sendMessage(sock, groupJid, PRIVACY_NOTICE);
   return 'privacy';
 }
@@ -54,10 +45,10 @@ export async function handleActivationConfirm(
     groupJid,
     `✅ *RembugBot aktif* di grup ini.
 
-Anggota: chat biasa saja, tidak perlu perintah.
-Admin: ketik *bantuan* untuk menu singkat, atau *admin* untuk menu lengkap.
+Anggota: chat biasa — bot kerja sendiri.
+Admin: *bantuan* · *mode normal* / *mode roast* · *jadwal* · *jeda*
 
-Ringkasan otomatis: *08.00* & *20.00* WIB.`
+Ringkasan otomatis: *08.00* & *20.00* WIB (mode: *normal*).`
   );
 }
 
@@ -67,7 +58,11 @@ export async function handlePause(
   group: Group
 ): Promise<void> {
   updateStatus(group.id, 'paused');
-  await sendMessage(sock, groupJid, '⏸️ Bot dijeda. Ringkasan & deteksi jadwal berhenti sementara.\nAdmin: ketik *lanjut* untuk menghidupkan lagi.');
+  await sendMessage(
+    sock,
+    groupJid,
+    '⏸️ Bot dijeda. Ringkasan, dokumen, dan pengingat berhenti sementara.\nAdmin: ketik *lanjut* untuk menghidupkan lagi.'
+  );
 }
 
 export async function handleResume(
@@ -76,7 +71,7 @@ export async function handleResume(
   group: Group
 ): Promise<void> {
   updateStatus(group.id, 'active');
-  await sendMessage(sock, groupJid, '▶️ Bot aktif lagi. Ringkasan otomatis berjalan.');
+  await sendMessage(sock, groupJid, '▶️ Bot aktif lagi. Automasi jalan.');
 }
 
 const pendingDeletions = new Map<string, { groupId: number; expiresAt: number }>();

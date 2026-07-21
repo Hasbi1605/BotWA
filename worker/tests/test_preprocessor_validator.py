@@ -40,6 +40,18 @@ def test_preprocessor_filters_noise_and_keeps_stable_evidence_ids():
     )
 
 
+def test_sensitivity_redacts_without_blocking():
+    from app.services.sensitivity import SensitivityScanner
+
+    scanner = SensitivityScanner()
+    text = "NIK saya 1234567890123456 dan password: rahasia123"
+    redacted, result = scanner.redact(text)
+    assert result.is_sensitive is True
+    assert "1234567890123456" not in redacted
+    assert "rahasia123" not in redacted
+    assert "DISAMARKAN" in redacted
+
+
 def test_preprocessor_extracts_links_and_top_senders():
     processed = Preprocessor().preprocess([
         {

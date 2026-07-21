@@ -138,13 +138,13 @@ export async function handleMessage(
 
   if (
     normalized.type === 'document' &&
-    isPdf(normalized.documentInfo?.mimeType, normalized.documentInfo?.fileName)
+    isSupportedDocument(normalized.documentInfo?.mimeType, normalized.documentInfo?.fileName)
   ) {
-    await handleIncomingPdf(sock, msg, {
+    await handleIncomingDocument(sock, msg, {
       groupId: group.id,
       messageDbId: savedMsg.id,
-      filename: normalized.documentInfo?.fileName || 'document.pdf',
-      mimeType: normalized.documentInfo?.mimeType || 'application/pdf',
+      filename: normalized.documentInfo?.fileName || 'document',
+      mimeType: normalized.documentInfo?.mimeType || 'application/octet-stream',
       fileLength: normalized.documentInfo?.fileLength || 0,
       config,
     });
@@ -156,13 +156,32 @@ export async function handleMessage(
   );
 }
 
-function isPdf(mimeType?: string, fileName?: string): boolean {
-  if (mimeType === 'application/pdf') return true;
-  if (fileName?.toLowerCase().endsWith('.pdf')) return true;
+function isSupportedDocument(mimeType?: string, fileName?: string): boolean {
+  const name = (fileName || '').toLowerCase();
+  const mime = (mimeType || '').toLowerCase();
+  if (mime === 'application/pdf' || name.endsWith('.pdf')) return true;
+  if (
+    mime.includes('wordprocessingml') ||
+    mime === 'application/msword' ||
+    name.endsWith('.docx') ||
+    name.endsWith('.doc')
+  ) {
+    return true;
+  }
   return false;
 }
 
-async function handleIncomingPdf(
+function fileExtension(filename: string, mimeType: string): string {
+  const name = filename.toLowerCase();
+  if (name.endsWith('.pdf') || mimeType.includes('pdf')) return 'pdf';
+  if (name.endsWith('.docx')) return 'docx';
+  if (name.endsWith('.doc')) return 'doc';
+  if (mimeType.includes('wordprocessingml')) return 'docx';
+  if (mimeType === 'application/msword') return 'doc';
+  return 'bin';
+}
+
+async function handleIncomingDocument(
   sock: WASocket,
   msg: WAMessage,
   opts: {
@@ -186,7 +205,7 @@ async function handleIncomingPdf(
     )) as Buffer;
 
     if (!buffer || buffer.length === 0) {
-      logger.warn({ messageDbId: opts.messageDbId }, 'Empty PDF buffer downloaded');
+      logger.warn({ messageDbId: opts.messageDbId }, 'Empty document buffer downloaded');
       return;
     }
 
@@ -201,13 +220,14 @@ async function handleIncomingPdf(
     });
 
     if (!doc) {
-      logger.info({ hash }, 'Duplicate PDF skipped');
+      logger.info({ hash }, 'Duplicate document skipped');
       return;
     }
 
-    const dir = join(opts.config.tempDir, 'pdfs', String(opts.groupId));
+    const ext = fileExtension(opts.filename, opts.mimeType);
+    const dir = join(opts.config.tempDir, 'docs', String(opts.groupId));
     mkdirSync(dir, { recursive: true });
-    const filePath = join(dir, `${doc.id}-${hash.slice(0, 12)}.pdf`);
+    const filePath = join(dir, `${doc.id}-${hash.slice(0, 12)}.${ext}`);
     writeFileSync(filePath, buffer);
 
     documentsRepo.updateStatus(doc.id, 'pending', { extracted_text_path: filePath });
@@ -219,10 +239,10 @@ async function handleIncomingPdf(
     });
 
     logger.info(
-      { documentId: doc.id, filePath, bytes: buffer.length },
-      'PDF stored and analysis job enqueued'
+      { documentId: doc.id, filePath, bytes: buffer.length, ext },
+      'Document stored and analysis job enqueued'
     );
   } catch (err) {
-    logger.error({ err, messageDbId: opts.messageDbId }, 'Failed to download/store PDF');
+    logger.error({ err, messageDbId: opts.messageDbId }, 'Failed to download/store document');
   }
 }

@@ -283,4 +283,11 @@ const migrations = [
       );
     `,
   },
+  {
+    name: '013_groups_summary_mode',
+    sql: `
+      ALTER TABLE groups ADD COLUMN summary_mode TEXT NOT NULL DEFAULT 'normal'
+        CHECK (summary_mode IN ('normal', 'roast'));
+    `,
+  },
 ];

@@ -9,6 +9,7 @@ import { sendMessage } from '../whatsapp/outbound.js';
 import { getSocket } from '../whatsapp/connection.js';
 import * as groupsRepo from '../db/repositories/groups.repo.js';
 import { renderSummary } from './summary-render.js';
+import { ingestCandidatesAndAutoActivate } from './schedule-auto.js';
 
 const logger = pino({ name: 'job-runner' });
 
@@ -110,10 +111,13 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
     return;
   }
 
+  const mode = (group.summary_mode === 'roast' ? 'roast' : 'normal') as 'normal' | 'roast';
+
   // Call worker
   const result = await callWorkerSummary({
     group_id: summary.group_id,
     window: { start: summary.start_at, end: summary.end_at },
+    mode,
     messages: messages.map(m => ({
       id: m.id,
       content: m.content,
@@ -135,6 +139,7 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
       startAt: summary.start_at,
       endAt: summary.end_at,
       documentLines,
+      mode,
     });
 
     // Update summary window
@@ -143,8 +148,8 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
       model_route: result.model_route,
     });
 
-    // Persist schedule candidates from summary output and enqueue dedicated detect pass
-    await persistScheduleCandidatesFromSummary(summary.group_id, result.output);
+    // Full-auto schedules from summary + background detect pass
+    ingestCandidatesAndAutoActivate(summary.group_id, result.output?.schedule_candidates || []);
     jobsRepo.create({
       type: 'schedule_detect',
       payload_ref: JSON.stringify({
@@ -192,35 +197,16 @@ function loadDocumentLinesForWindow(groupId: number, startAt: string, endAt: str
   return lines;
 }
 
-async function persistScheduleCandidatesFromSummary(groupId: number, output: any): Promise<void> {
-  const candidates = output?.schedule_candidates;
-  if (!Array.isArray(candidates) || candidates.length === 0) return;
-
-  const schedulesRepo = await import('../db/repositories/schedules.repo.js');
-  for (const candidate of candidates) {
-    if (!candidate?.title) continue;
-    schedulesRepo.createCandidate({
-      group_id: groupId,
-      title: candidate.title,
-      date: candidate.date ?? null,
-      time: candidate.time ?? null,
-      location: candidate.location ?? null,
-      ambiguities: candidate.ambiguities ?? [],
-      source_message_ids: candidate.source_message_ids ?? [],
-      expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
-    });
-  }
-}
-
 async function processPdfJob(job: jobsRepo.Job, config: Config): Promise<void> {
   const payload = JSON.parse(job.payload_ref);
   const doc = documentsRepo.findById(payload.documentId);
   if (!doc) throw new Error('Document not found');
 
   if (!doc.extracted_text_path) {
-    throw new Error('PDF file path missing — media was not downloaded');
+    throw new Error('Document file path missing — media was not downloaded');
   }
 
+  const group = groupsRepo.findById(doc.group_id);
   documentsRepo.updateStatus(doc.id, 'analyzing');
 
   const result = await callWorkerPdfAnalyze({
@@ -233,11 +219,24 @@ async function processPdfJob(job: jobsRepo.Job, config: Config): Promise<void> {
   const analysis = result.analysis ?? result;
   const status = (analysis as any)?.status || result.status;
 
+  // Legacy held → treat as analyzed with redaction note (no admin confirm)
   if (status === 'held' || (analysis as any)?.reason === 'sensitive_data') {
-    documentsRepo.updateStatus(doc.id, 'held', {
+    const safeBody = {
+      title: doc.filename,
+      purpose: 'Dokumen memuat pola data sensitif; ringkasan disamarkan.',
+      key_points: [
+        'Beberapa nomor/data pribadi disamarkan otomatis.',
+        (analysis as any)?.summary || 'Tidak menampilkan data mentah di grup.',
+      ],
+      redacted: true,
+    };
+    documentsRepo.updateStatus(doc.id, 'analyzed', {
       sensitivity: 'held',
-      analysis_json: JSON.stringify(analysis),
+      analysis_json: JSON.stringify(safeBody),
     });
+    if (group?.status === 'active') {
+      await postDocumentSummaryToGroup(group.jid, doc.filename, safeBody);
+    }
     return;
   }
 
@@ -250,16 +249,56 @@ async function processPdfJob(job: jobsRepo.Job, config: Config): Promise<void> {
 
   if (status === 'error' || result.status === 'error') {
     documentsRepo.updateStatus(doc.id, 'error', {
-      error_message: (analysis as any)?.error || result.error || 'PDF analysis failed',
+      error_message: (analysis as any)?.error || result.error || 'Document analysis failed',
     });
-    throw new Error((analysis as any)?.error || result.error || 'PDF analysis failed');
+    throw new Error((analysis as any)?.error || result.error || 'Document analysis failed');
   }
 
-  // status analyzed / ok
+  const body = (analysis as any)?.analysis ?? analysis;
   documentsRepo.updateStatus(doc.id, 'analyzed', {
-    analysis_json: JSON.stringify((analysis as any)?.analysis ?? analysis),
+    analysis_json: JSON.stringify(body),
     page_count: (analysis as any)?.page_count ?? doc.page_count,
+    sensitivity: (analysis as any)?.redacted ? 'held' : 'clear',
   });
+
+  if (group?.status === 'active') {
+    await postDocumentSummaryToGroup(group.jid, doc.filename, body);
+  }
+}
+
+async function postDocumentSummaryToGroup(
+  groupJid: string,
+  filename: string,
+  analysis: any
+): Promise<void> {
+  const sock = getSocket();
+  if (!sock) return;
+
+  const lines: string[] = ['📄 *Ringkasan dokumen*', `File: ${filename}`];
+  if (analysis?.title) lines.push(`Judul: ${analysis.title}`);
+  if (analysis?.purpose) lines.push(String(analysis.purpose));
+  const points: string[] = Array.isArray(analysis?.key_points) ? analysis.key_points : [];
+  for (const p of points.slice(0, 6)) {
+    lines.push(`• ${p}`);
+  }
+  if (Array.isArray(analysis?.decisions) && analysis.decisions.length) {
+    lines.push('*Keputusan di dokumen*');
+    for (const d of analysis.decisions.slice(0, 4)) {
+      lines.push(`• ${typeof d === 'string' ? d : d?.text || d}`);
+    }
+  }
+  if (Array.isArray(analysis?.tasks) && analysis.tasks.length) {
+    lines.push('*Tugas*');
+    for (const t of analysis.tasks.slice(0, 4)) {
+      const text = typeof t === 'string' ? t : t?.text || JSON.stringify(t);
+      lines.push(`• ${text}`);
+    }
+  }
+  if (analysis?.redacted) {
+    lines.push('_Data sensitif disamarkan otomatis._');
+  }
+
+  await sendMessage(sock, groupJid, lines.join('\n'));
 }
 
 async function processScheduleJob(job: jobsRepo.Job, config: Config): Promise<void> {
@@ -283,19 +322,7 @@ async function processScheduleJob(job: jobsRepo.Job, config: Config): Promise<vo
   }, config);
 
   if (result.status === 'ok' && result.candidates) {
-    const schedulesRepo = await import('../db/repositories/schedules.repo.js');
-    for (const candidate of result.candidates) {
-      schedulesRepo.createCandidate({
-        group_id: payload.groupId,
-        title: candidate.title,
-        date: candidate.date,
-        time: candidate.time,
-        location: candidate.location,
-        ambiguities: candidate.ambiguities,
-        source_message_ids: candidate.source_message_ids,
-        expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
-      });
-    }
+    ingestCandidatesAndAutoActivate(payload.groupId, result.candidates);
   }
 }
 

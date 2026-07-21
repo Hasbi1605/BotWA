@@ -10,6 +10,9 @@ export type IntentName =
   | 'help_admin'
   | 'status'
   | 'summary'
+  | 'mode'
+  | 'mode_normal'
+  | 'mode_roast'
   | 'pause'
   | 'resume'
   | 'delete_data'
@@ -57,6 +60,7 @@ export function looksLikeCommand(text: string): boolean {
     /^(admin|menu admin|bantuan admin)$/,
     /^(status|cek status)$/,
     /^(ringkas|rangkum|ringkas sekarang|rangkum sekarang|summary)(\s+sekarang)?$/,
+    /^(mode)(\s+(normal|roast))?$/,
     /^(jeda|pause|istirahat)$/,
     /^(lanjut(kan)?|resume|hidupkan)$/,
     /^(hapus\s*data|hapusdata)$/,
@@ -93,6 +97,8 @@ export function parseIntent(text: string): ParsedIntent {
       case 'rangkum':
       case 'summary':
         return { name: 'summary', args, raw };
+      case 'mode':
+        return parseModeArgs(args, raw);
       case 'pause':
       case 'jeda':
         return { name: 'pause', args, raw };
@@ -137,6 +143,11 @@ export function parseIntent(text: string): ParsedIntent {
   if (/^(ringkas|rangkum|summary)(\s+sekarang)?$/.test(t)) {
     return { name: 'summary', args: [], raw };
   }
+  if (/^mode\b/.test(t)) {
+    const rest = t.replace(/^mode\s*/, '');
+    const args = rest ? rest.split(/\s+/) : [];
+    return parseModeArgs(args, raw);
+  }
   if (/^(jeda|pause|istirahat)$/.test(t)) {
     return { name: 'pause', args: [], raw };
   }
@@ -163,6 +174,15 @@ export function parseIntent(text: string): ParsedIntent {
   }
 
   return { name: 'unknown', args: [], raw };
+}
+
+function parseModeArgs(args: string[], raw: string): ParsedIntent {
+  const sub = (args[0] || '').toLowerCase();
+  if (sub === 'normal') return { name: 'mode_normal', args, raw };
+  if (sub === 'roast' || sub === 'roasting' || sub === 'santai') {
+    return { name: 'mode_roast', args, raw };
+  }
+  return { name: 'mode', args, raw };
 }
 
 function parseScheduleArgs(args: string[], raw: string): ParsedIntent {

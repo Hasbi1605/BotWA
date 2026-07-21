@@ -20,6 +20,10 @@ describe('command parser (natural Indonesian)', () => {
     expect(parseIntent('lanjut').name).toBe('resume');
     expect(parseIntent('hapus data').name).toBe('delete_data');
     expect(parseIntent('jadwal').name).toBe('schedule_list');
+    expect(parseIntent('mode').name).toBe('mode');
+    expect(parseIntent('mode normal').name).toBe('mode_normal');
+    expect(parseIntent('mode roast').name).toBe('mode_roast');
+    expect(parseIntent('.mode roast').name).toBe('mode_roast');
   });
 
   it('does not treat normal chat as commands', () => {

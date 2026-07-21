@@ -1,5 +1,7 @@
 import { getDb } from '../index.js';
 
+export type SummaryMode = 'normal' | 'roast';
+
 export interface Group {
   id: number;
   jid: string;
@@ -8,6 +10,7 @@ export interface Group {
   status: string;
   summary_cron_morning: string;
   summary_cron_evening: string;
+  summary_mode: SummaryMode;
   activated_at: string | null;
   created_at: string;
   updated_at: string;
@@ -46,4 +49,11 @@ export function setActivated(id: number): void {
   db.prepare(
     'UPDATE groups SET status = \'active\', activated_at = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?'
   ).run(id);
+}
+
+export function setSummaryMode(id: number, mode: SummaryMode): void {
+  const db = getDb('');
+  db.prepare(
+    'UPDATE groups SET summary_mode = ?, updated_at = datetime(\'now\') WHERE id = ?'
+  ).run(mode, id);
 }

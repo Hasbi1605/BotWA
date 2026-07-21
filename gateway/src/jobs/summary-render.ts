@@ -13,6 +13,7 @@ export interface RenderSummaryInput {
   documentLines?: string[];
   /** Optional late header e.g. after outage */
   headerPrefix?: string;
+  mode?: 'normal' | 'roast';
 }
 
 /** Build PERSON_xxx → display name from alias_map { name: PERSON_xxx }. */
@@ -44,9 +45,10 @@ function nameOf(alias: string | null | undefined, rev: Map<string, string>): str
 }
 
 export function renderSummary(input: RenderSummaryInput): string {
-  const { output, startAt, endAt, documentLines = [], headerPrefix } = input;
+  const { output, startAt, endAt, documentLines = [], headerPrefix, mode = 'normal' } = input;
   const rev = reverseAliasMap(output?.alias_map);
   const R = (s: string) => remapAliases(s, rev);
+  const roast = mode === 'roast';
 
   const sections: string[] = [];
 
@@ -64,7 +66,11 @@ export function renderSummary(input: RenderSummaryInput): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   });
-  sections.push(`*Ringkasan grup — ${startDate} s/d ${endDate}*`);
+  sections.push(
+    roast
+      ? `*Ringkasan roast — ${startDate} s/d ${endDate}* 🔥`
+      : `*Ringkasan grup — ${startDate} s/d ${endDate}*`
+  );
 
   if (output?.activity) {
     const msgCount = output.activity.message_count ?? 0;
@@ -73,11 +79,15 @@ export function renderSummary(input: RenderSummaryInput): string {
   }
 
   if (output?.narrative) {
-    sections.push(`*Inti diskusi*\n${R(output.narrative)}`);
+    sections.push(
+      roast
+        ? `*Inti (versi santai)*\n${R(output.narrative)}`
+        : `*Inti diskusi*\n${R(output.narrative)}`
+    );
   }
 
   if (output?.highlights?.length > 0) {
-    const lines = ['*Sorotan*'];
+    const lines = [roast ? '*Yang rame*' : '*Sorotan*'];
     for (const h of output.highlights.slice(0, 8)) {
       lines.push(`• ${R(h.text)}`);
     }
@@ -118,11 +128,12 @@ export function renderSummary(input: RenderSummaryInput): string {
   }
 
   if (output?.schedule_candidates?.length > 0) {
-    const lines = ['*Usulan jadwal* (admin: ketik *jadwal* lalu balas *YA*)'];
+    const lines = ['*Jadwal terdeteksi* (otomatis + pengingat)'];
     for (const s of output.schedule_candidates) {
       let schedText = `• ${R(s.title)}`;
       if (s.date) schedText += ` — ${s.date}`;
       if (s.time) schedText += ` ${s.time}`;
+      else if (s.date) schedText += ' 09:00 (default)';
       if (s.location) schedText += ` @ ${R(s.location)}`;
       if (s.ambiguities?.length > 0) schedText += ' ⚠️ belum pasti';
       lines.push(schedText);
