@@ -70,6 +70,21 @@ export function getByGroup(groupId: number): Document[] {
   ).all(groupId) as Document[];
 }
 
+/** Analyzed PDFs whose parent message falls inside the summary window. */
+export function getAnalyzedInWindow(groupId: number, startAt: string, endAt: string): Document[] {
+  const db = getDb('');
+  return db.prepare(
+    `SELECT d.*
+     FROM documents d
+     JOIN messages m ON m.id = d.message_id
+     WHERE d.group_id = ?
+       AND d.status = 'analyzed'
+       AND m.timestamp >= ?
+       AND m.timestamp < ?
+     ORDER BY m.timestamp ASC`
+  ).all(groupId, startAt, endAt) as Document[];
+}
+
 export function deleteOlderThan(before: string): number {
   const db = getDb('');
   const result = db.prepare('DELETE FROM documents WHERE created_at < ?').run(before);

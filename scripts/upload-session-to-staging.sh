@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Upload local Baileys session (from pair-local.mjs) to EC2 staging via SSM.
+# Upload local Baileys session (from pair-local.mjs) to EC2 staging via S3 + SSM.
 # Usage: ./scripts/upload-session-to-staging.sh [path/to/session]
 set -euo pipefail
 
 PROFILE="${AWS_PROFILE:-rembugbot-provisioner}"
 REGION="${AWS_REGION:-ap-southeast-1}"
 STACK_NAME="${STACK_NAME:-rembugbot-staging}"
+BUCKET="${BACKUP_S3_BUCKET:-rembugbot-backups-330420073318-ap-southeast-1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION_DIR="${1:-$SCRIPT_DIR/../data/auth-local/session}"
 
 if [[ ! -f "$SESSION_DIR/creds.json" ]]; then
-  echo "ERROR: no creds.json in $SESSION_DIR — run pair-local.mjs first" >&2
+  echo "ERROR: no creds.json in $SESSION_DIR — run gateway/scripts/pair-local.mjs first" >&2
   exit 1
 fi
 
@@ -19,47 +20,77 @@ INSTANCE_ID="$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
   --output text)"
 
+TMP="$(mktemp -t wa-session.XXXXXX.tgz)"
+tar -C "$SESSION_DIR" -czf "$TMP" .
+aws s3 cp "$TMP" "s3://${BUCKET}/tmp/wa-auth-session.tgz" \
+  --profile "$PROFILE" --region "$REGION"
+rm -f "$TMP"
+echo "Uploaded session archive to s3://${BUCKET}/tmp/wa-auth-session.tgz"
+
 PARAMS_FILE="$(mktemp)"
-export SESSION_DIR PARAMS_FILE
-
-python3 <<'PY'
-import base64, io, json, os, tarfile
+python3 - <<PY
+import json
 from pathlib import Path
-
-session = Path(os.environ["SESSION_DIR"])
-buf = io.BytesIO()
-with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-    for p in session.iterdir():
-        if p.is_file():
-            tar.add(p, arcname=p.name)
-b64 = base64.b64encode(buf.getvalue()).decode()
-
+bucket = "$BUCKET"
 remote = f"""set -e
-docker compose -f /opt/rembugbot/app/docker/docker-compose.yml stop gateway || true
+export AWS_DEFAULT_REGION={REGION if False else "$REGION"}
+BUCKET={bucket}
+AWS=/usr/local/bin/aws
+command -v aws >/dev/null && AWS=aws
+cd /opt/rembugbot/app/docker
+docker compose stop gateway || true
 rm -rf /var/lib/docker/volumes/docker_wa-auth/_data/session
 mkdir -p /var/lib/docker/volumes/docker_wa-auth/_data/session
-python3 - <<'PY2'
-import base64, tarfile, io
-from pathlib import Path
-b64 = '''{b64}'''
-raw = base64.b64decode(b64)
-with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as tar:
-    tar.extractall('/var/lib/docker/volumes/docker_wa-auth/_data/session')
-print('extracted', len(list(Path('/var/lib/docker/volumes/docker_wa-auth/_data/session').iterdir())), 'files')
-PY2
+$AWS s3 cp s3://$BUCKET/tmp/wa-auth-session.tgz /tmp/wa-auth-session.tgz
+tar -C /var/lib/docker/volumes/docker_wa-auth/_data/session -xzf /tmp/wa-auth-session.tgz
 chmod -R a+rX /var/lib/docker/volumes/docker_wa-auth/_data/session
-ls -la /var/lib/docker/volumes/docker_wa-auth/_data/session
-cd /opt/rembugbot/app/docker
+chown -R 100:101 /var/lib/docker/volumes/docker_wa-auth/_data 2>/dev/null || true
+echo FILES=$(ls /var/lib/docker/volumes/docker_wa-auth/_data/session | wc -l)
 docker compose up -d gateway
-sleep 10
-docker exec rembugbot-gateway curl -sS http://127.0.0.1:3000/health/ready || true
-echo
-docker logs rembugbot-gateway 2>&1 | grep -E 'connected successfully|WhatsApp connected|Connection closed|error' | tail -20
+for i in $(seq 1 30); do
+  READY=$(docker exec rembugbot-gateway curl -sS http://127.0.0.1:3000/health/ready 2>/dev/null || echo fail)
+  echo "try $i $READY"
+  echo "$READY" | grep -q '"whatsapp":"connected"' && break
+  sleep 2
+done
+$AWS s3 rm s3://$BUCKET/tmp/wa-auth-session.tgz || true
+rm -f /tmp/wa-auth-session.tgz
 """
-
-Path(os.environ["PARAMS_FILE"]).write_text(json.dumps({"commands": [remote]}))
-print(f"session archive ready ({len(b64)} b64 chars)")
+# Fix: the f-string above mixed shell. Write remote script plainly:
+Path("$PARAMS_FILE").write_text(json.dumps({"commands": [f"""set -e
+export AWS_DEFAULT_REGION=ap-southeast-1
+BUCKET={bucket}
+if command -v aws >/dev/null; then AWS=aws; else AWS=/usr/local/bin/aws; fi
+cd /opt/rembugbot/app/docker
+docker compose stop gateway || true
+rm -rf /var/lib/docker/volumes/docker_wa-auth/_data/session
+mkdir -p /var/lib/docker/volumes/docker_wa-auth/_data/session
+$AWS s3 cp s3://$BUCKET/tmp/wa-auth-session.tgz /tmp/wa-auth-session.tgz
+tar -C /var/lib/docker/volumes/docker_wa-auth/_data/session -xzf /tmp/wa-auth-session.tgz
+chmod -R a+rX /var/lib/docker/volumes/docker_wa-auth/_data/session
+chown -R 100:101 /var/lib/docker/volumes/docker_wa-auth/_data 2>/dev/null || true
+echo FILES=$(ls /var/lib/docker/volumes/docker_wa-auth/_data/session | wc -l)
+docker compose up -d gateway
+for i in $(seq 1 30); do
+  READY=$(docker exec rembugbot-gateway curl -sS http://127.0.0.1:3000/health/ready 2>/dev/null || echo fail)
+  echo "try $i $READY"
+  echo "$READY" | grep -q '"whatsapp":"connected"' && break
+  sleep 2
+done
+$AWS s3 rm s3://$BUCKET/tmp/wa-auth-session.tgz || true
+rm -f /tmp/wa-auth-session.tgz
+"""]}))
+print("params ready")
 PY
+
+# simpler pure bash params
+cat > "$PARAMS_FILE" <<EOF
+{
+  "commands": [
+    "set -e; export AWS_DEFAULT_REGION=ap-southeast-1; BUCKET=${BUCKET}; if command -v aws >/dev/null; then AWS=aws; else AWS=/usr/local/bin/aws; fi; cd /opt/rembugbot/app/docker; docker compose stop gateway || true; rm -rf /var/lib/docker/volumes/docker_wa-auth/_data/session; mkdir -p /var/lib/docker/volumes/docker_wa-auth/_data/session; \\$AWS s3 cp s3://\\$BUCKET/tmp/wa-auth-session.tgz /tmp/wa-auth-session.tgz; tar -C /var/lib/docker/volumes/docker_wa-auth/_data/session -xzf /tmp/wa-auth-session.tgz; chmod -R a+rX /var/lib/docker/volumes/docker_wa-auth/_data/session; chown -R 100:101 /var/lib/docker/volumes/docker_wa-auth/_data 2>/dev/null || true; echo FILES=\\$(ls /var/lib/docker/volumes/docker_wa-auth/_data/session | wc -l); docker compose up -d gateway; for i in \\$(seq 1 30); do READY=\\$(docker exec rembugbot-gateway curl -sS http://127.0.0.1:3000/health/ready 2>/dev/null || echo fail); echo try \\$i \\$READY; echo \\$READY | grep -q '\"whatsapp\":\"connected\"' && break; sleep 2; done; \\$AWS s3 rm s3://\\$BUCKET/tmp/wa-auth-session.tgz || true; rm -f /tmp/wa-auth-session.tgz"
+  ]
+}
+EOF
 
 COMMAND_ID="$(aws ssm send-command \
   --profile "$PROFILE" --region "$REGION" \

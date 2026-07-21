@@ -40,6 +40,41 @@ def test_preprocessor_filters_noise_and_keeps_stable_evidence_ids():
     )
 
 
+def test_preprocessor_extracts_links_and_top_senders():
+    processed = Preprocessor().preprocess([
+        {
+            "id": 1,
+            "content": "Cek proposal https://example.com/a dan www.desa.id/info",
+            "sender_name": "Ayu",
+            "timestamp": "2026-07-21T01:00:00Z",
+            "type": "text",
+        },
+        {
+            "id": 2,
+            "content": "oke",
+            "sender_name": "Budi",
+            "timestamp": "2026-07-21T01:01:00Z",
+            "type": "text",
+        },
+        {
+            "id": 3,
+            "content": "https://example.com/a lagi",
+            "sender_name": "Ayu",
+            "timestamp": "2026-07-21T01:02:00Z",
+            "type": "text",
+        },
+    ])
+    urls = [link["url"] for link in processed.links]
+    assert "https://example.com/a" in urls
+    assert "https://www.desa.id/info" in urls
+    # duplicate URL from Ayu is de-duped
+    assert urls.count("https://example.com/a") == 1
+    assert processed.top_senders[0]["alias"] == "PERSON_001"
+    assert processed.top_senders[0]["count"] == 2
+    assert processed.alias_map["Ayu"] == "PERSON_001"
+
+
+
 def test_validator_accepts_exact_quote_and_known_evidence():
     result = SummaryValidator().validate(
         _output(

@@ -209,6 +209,20 @@ async function handlePendingReply(
   const groupJid = group.jid;
 
   if (answer === 'confirm_no') {
+    // Reject listed schedule candidates when admin declines a pick menu
+    if (pending.kind === 'schedule_pick' && pending.options?.length) {
+      const schedulesRepo = await import('../db/repositories/schedules.repo.js');
+      for (const id of pending.options) {
+        try {
+          schedulesRepo.rejectCandidate(id);
+        } catch {
+          /* already processed */
+        }
+      }
+      clearPending(groupJid, participant.wa_jid_hmac);
+      await sendMessage(sock, groupJid, 'Baik, usulan jadwal ditolak.');
+      return;
+    }
     clearPending(groupJid, participant.wa_jid_hmac);
     clearDeletePending(groupJid, participant.wa_jid_hmac);
     await sendMessage(sock, groupJid, 'Baik, dibatalkan.');

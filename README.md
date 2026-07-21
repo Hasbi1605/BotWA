@@ -4,12 +4,13 @@ Asisten otomatis untuk grup WhatsApp yang membantu kelompok KKN dan komunitas de
 
 ## Fitur
 
-- **Ringkasan otomatis** 2x sehari (08.00 & 20.00 WIB)
-- **Deteksi keputusan dan tugas** dengan atribusi pengirim
+- **Ringkasan otomatis** 2× sehari (08.00 & 20.00 WIB), gaya bahasa santai
+- **Rekam diam-diam** — anggota chat biasa, bot tidak membalas setiap pesan
+- **Inti diskusi, keputusan, tugas, pertanyaan, link, top pengirim**
 - **Analisis PDF** dengan sensitivity gate untuk data pribadi
-- **Deteksi jadwal** dengan konfirmasi admin
+- **Deteksi jadwal** + konfirmasi admin lewat *YA* / *tidak*
 - **Pengingat otomatis** untuk jadwal terkonfirmasi
-- **Perintah admin** untuk kontrol penuh
+- **Admin-only** untuk aktivasi & perintah sensitif (LID-aware)
 
 ## Arsitektur
 
@@ -53,20 +54,25 @@ docker compose up --build -d
 docker compose logs -f gateway
 ```
 
-### Perintah Bot
+### Cara pakai (bahasa natural)
 
-Ketik di grup WhatsApp:
+**Anggota:** chat biasa saja — tidak perlu perintah.
 
-| Perintah | Fungsi |
+**Admin grup** (contoh frasa):
+
+| Frasa | Fungsi |
 |---|---|
-| `.aktifkan` | Aktifkan bot di grup |
-| `.ringkas sekarang` | Buat ringkasan manual |
-| `.jadwal` | Lihat jadwal dan kandidat |
-| `.jadwal tambah "judul" DD-MM-YYYY HH:mm "lokasi"` | Tambah jadwal |
-| `.status` | Status bot |
-| `.pause` / `.resume` | Jeda/lanjutkan bot |
-| `.hapusdata` | Hapus data grup |
-| `.bantuan` | Tampilkan bantuan |
+| `aktifkan bot` lalu `YA` | Aktifkan + setuju privasi (bot harus jadi admin grup) |
+| `bantuan` | Menu singkat |
+| `admin` | Menu admin |
+| `ringkas` | Ringkasan manual sekarang |
+| `jadwal` | Lihat / setujui usulan (balas `YA` / nomor / `tidak`) |
+| `jadwal tambah "Rapat" 25-07-2026 15:00 "Balai"` | Tambah jadwal |
+| `status` / `jeda` / `lanjut` | Status & kontrol |
+| `hapus data` | Hapus data grup (butuh konfirmasi `YA`) |
+| `pdf` | Daftar PDF / izinkan yang ditahan |
+
+Perintah bertitik (`.aktifkan`, `.ringkas sekarang`, …) tetap didukung.
 
 ## Pengembangan
 

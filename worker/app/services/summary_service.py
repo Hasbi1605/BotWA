@@ -2,7 +2,7 @@ from __future__ import annotations
 import structlog
 
 from app.schemas.requests import SummaryRequest
-from app.schemas.summary_output import SummaryOutput
+from app.schemas.summary_output import SharedLink, SummaryOutput, TopSender
 from app.services.preprocessor import Preprocessor
 from app.services.validator import SummaryValidator
 from app.providers.cascade import ProviderCascade
@@ -21,17 +21,20 @@ ATURAN PENTING:
 4. Tugas hanya ditugaskan ke orang yang EKSPLISIT disebut dalam percakapan
 5. Jika ada konflik atau perbedaan pendapat, sebutkan bahwa belum ada kesepakatan
 6. Jadwal yang terdeteksi harus berstatus "kandidat" - jangan terjemahkan waktu yang ambigu
-7. Bahasa Indonesia santai tapi sopan (grup KKN/desa), hindari jargon
+7. Bahasa Indonesia santai tapi sopan (grup KKN/desa), hindari jargon teknis
 8. Tanggal absolut (contoh: "Senin, 21 Juli 2026") + zona WIB
-9. narrative padat 3–6 kalimat; sebut topik utama & siapa aktif (alias PERSON_xxx)
-10. Section kosong = array kosong, jangan mengarang
+9. narrative: padat 3–6 kalimat; sebut topik utama & siapa aktif (pakai alias PERSON_xxx)
+10. highlights: gabungkan chat mirip jadi topik singkat (1 baris), sebut siapa yang aktif
+11. open_questions: pertanyaan yang masih menggantung / belum dijawab
+12. Section kosong = array kosong, jangan mengarang
+13. JANGAN isi field links / top_senders / alias_map — itu diisi sistem
 
 OUTPUT FORMAT (JSON):
 {
   "period": {"start": "ISO-8601", "end": "ISO-8601"},
   "activity": {"message_count": <int>, "participant_count": <int>},
-  "narrative": "ringkasan naratif lengkap dalam bahasa Indonesia",
-  "highlights": [{"text": "highlight", "source_message_ids": [<id>]}],
+  "narrative": "ringkasan naratif padat dalam bahasa Indonesia santai",
+  "highlights": [{"text": "Topik singkat — deskripsi 1 kalimat + siapa aktif", "source_message_ids": [<id>]}],
   "important_messages": [{"speaker_alias": "PERSON_001", "quote": "kutipan persis", "source_message_id": <id>}],
   "decisions": [{"text": "keputusan", "status": "confirmed|tentative|disputed", "source_message_ids": [<id>]}],
   "tasks": [{"text": "tugas", "assignee_alias": "PERSON_001|null", "due_at": "ISO-8601|null", "source_message_ids": [<id>]}],
@@ -58,14 +61,16 @@ class SummaryService:
         processed = self.preprocessor.preprocess(messages_dicts)
 
         if not processed.messages:
-            return SummaryResult(
-                output=SummaryOutput(
-                    period=request.window,
-                    activity={"message_count": 0, "participant_count": 0},
-                    narrative="Tidak ada pesan dalam periode ini.",
-                ),
-                model_route="none",
+            empty = SummaryOutput(
+                period=request.window,
+                activity={
+                    "message_count": processed.stats.get("total", 0),
+                    "participant_count": processed.participant_count,
+                },
+                narrative="Tidak ada pesan bermakna dalam periode ini.",
             )
+            self._enrich(empty, processed)
+            return SummaryResult(output=empty, model_route="none")
 
         # Build context for AI
         context = self._build_context(processed, request.window)
@@ -87,6 +92,7 @@ class SummaryService:
                 # Evidence validation
                 validation = self.validator.validate(output, processed)
                 if validation.can_publish:
+                    self._enrich(output, processed)
                     return SummaryResult(output=output, model_route=route.id)
                 else:
                     logger.warning(
@@ -104,6 +110,27 @@ class SummaryService:
 
         # All routes failed
         raise RuntimeError(f"All provider routes failed. Last error: {last_error}")
+
+    def _enrich(self, output: SummaryOutput, processed) -> None:
+        """Attach deterministic fields (links, top senders, alias map)."""
+        output.links = [
+            SharedLink(
+                url=item["url"],
+                sender_alias=item.get("sender_alias"),
+                source_message_id=item.get("source_message_id"),
+            )
+            for item in processed.links
+        ]
+        output.top_senders = [
+            TopSender(alias=item["alias"], count=item["count"])
+            for item in processed.top_senders
+        ]
+        output.alias_map = dict(processed.alias_map)
+        # Prefer real activity counts from preprocessor
+        output.activity = {
+            "message_count": processed.stats.get("total", output.activity.get("message_count", 0)),
+            "participant_count": processed.participant_count,
+        }
 
     def _build_context(self, processed, window: dict) -> str:
         lines = [

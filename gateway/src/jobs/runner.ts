@@ -8,6 +8,7 @@ import { callWorkerSummary, callWorkerPdfAnalyze, callWorkerScheduleDetect } fro
 import { sendMessage } from '../whatsapp/outbound.js';
 import { getSocket } from '../whatsapp/connection.js';
 import * as groupsRepo from '../db/repositories/groups.repo.js';
+import { renderSummary } from './summary-render.js';
 
 const logger = pino({ name: 'job-runner' });
 
@@ -124,8 +125,17 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
   }, config);
 
   if (result.status === 'ok' && result.output) {
-    // Render summary
-    const rendered = renderSummary(result.output, summary);
+    const documentLines = loadDocumentLinesForWindow(
+      summary.group_id,
+      summary.start_at,
+      summary.end_at
+    );
+    const rendered = renderSummary({
+      output: result.output,
+      startAt: summary.start_at,
+      endAt: summary.end_at,
+      documentLines,
+    });
 
     // Update summary window
     summariesRepo.updateStatus(summary.id, 'completed', {
@@ -153,6 +163,33 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
   } else {
     throw new Error(result.error || 'Worker returned error');
   }
+}
+
+function loadDocumentLinesForWindow(groupId: number, startAt: string, endAt: string): string[] {
+  const docs = documentsRepo.getAnalyzedInWindow(groupId, startAt, endAt);
+  const lines: string[] = [];
+  for (const doc of docs) {
+    if (!doc.analysis_json) {
+      lines.push(`${doc.filename} (sudah dianalisis)`);
+      continue;
+    }
+    try {
+      const analysis = JSON.parse(doc.analysis_json);
+      const summaryText =
+        analysis?.summary ||
+        analysis?.analysis?.summary ||
+        analysis?.title ||
+        null;
+      if (summaryText) {
+        lines.push(`${doc.filename}: ${String(summaryText).slice(0, 200)}`);
+      } else {
+        lines.push(`${doc.filename} (sudah dianalisis)`);
+      }
+    } catch {
+      lines.push(`${doc.filename} (sudah dianalisis)`);
+    }
+  }
+  return lines;
 }
 
 async function persistScheduleCandidatesFromSummary(groupId: number, output: any): Promise<void> {
@@ -298,92 +335,6 @@ async function processReminderJob(_job: jobsRepo.Job, _config: Config): Promise<
       remindersRepo.markFailed(reminder.id, String(err));
     }
   }
-}
-
-function renderSummary(output: any, summary: summariesRepo.SummaryWindow): string {
-  // Casual Indonesian layout inspired by community summary bots (mocasus/whatsapp-group-summary)
-  const sections: string[] = [];
-
-  const startDate = new Date(summary.start_at).toLocaleString('id-ID', {
-    timeZone: 'Asia/Jakarta',
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-  const endDate = new Date(summary.end_at).toLocaleString('id-ID', {
-    timeZone: 'Asia/Jakarta',
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-  sections.push(`*Ringkasan grup — ${startDate} s/d ${endDate}*`);
-
-  if (output.activity) {
-    sections.push(
-      `${output.activity.message_count} pesan · ${output.activity.participant_count} orang aktif`
-    );
-  }
-
-  if (output.narrative) {
-    sections.push(`*Inti diskusi*\n${output.narrative}`);
-  }
-
-  if (output.highlights?.length > 0) {
-    sections.push('*Sorotan*');
-    for (const h of output.highlights.slice(0, 8)) {
-      sections.push(`• ${h.text}`);
-    }
-  }
-
-  if (output.important_messages?.length > 0) {
-    sections.push('*Pesan penting*');
-    for (const m of output.important_messages.slice(0, 6)) {
-      sections.push(`• ${m.speaker_alias}: "${m.quote}"`);
-    }
-  }
-
-  if (output.decisions?.length > 0) {
-    sections.push('*Keputusan*');
-    for (const d of output.decisions) {
-      sections.push(`• ${d.text}`);
-    }
-  }
-
-  if (output.tasks?.length > 0) {
-    sections.push('*Tugas / PR*');
-    for (const t of output.tasks) {
-      let taskText = `• ${t.text}`;
-      if (t.assignee_alias) taskText += ` — ${t.assignee_alias}`;
-      sections.push(taskText);
-    }
-  }
-
-  if (output.schedule_candidates?.length > 0) {
-    sections.push('*Usulan jadwal* (admin: balas YA / lihat *jadwal*)');
-    for (const s of output.schedule_candidates) {
-      let schedText = `• ${s.title}`;
-      if (s.date) schedText += ` — ${s.date}`;
-      if (s.time) schedText += ` ${s.time}`;
-      if (s.ambiguities?.length > 0) schedText += ` ⚠️ belum pasti`;
-      sections.push(schedText);
-    }
-  }
-
-  if (output.documents?.length > 0) {
-    sections.push('*Dokumen*');
-    for (const doc of output.documents) {
-      sections.push(`• ${doc}`);
-    }
-    sections.push('');
-  }
-
-  // Open questions
-  if (output.open_questions?.length > 0) {
-    sections.push('❓ *Pertanyaan Terbuka*');
-    for (const q of output.open_questions) {
-      sections.push(`• ${q}`);
-    }
-  }
-
-  return sections.join('\n').trim();
 }
 
 function classifyError(err: any): string {

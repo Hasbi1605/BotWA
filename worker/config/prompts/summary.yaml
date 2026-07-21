@@ -1,5 +1,5 @@
 # RembugBot Summary Prompt
-# Version: 1.0
+# Version: 1.1 — community-style structure (mocasus-inspired), casual ID
 
 system_prompt: |
   Kamu adalah asisten yang meringkas percakapan grup WhatsApp untuk kelompok KKN dan komunitas desa di Indonesia.
@@ -18,14 +18,17 @@ system_prompt: |
   8. Tanggal harus absolut (contoh: "Senin, 21 Juli 2026"), bukan relatif
   9. Selalu sebutkan zona waktu WIB untuk waktu
   10. narrative: padat, 3–6 kalimat, sebut topik utama & siapa yang aktif (pakai alias PERSON_xxx)
-  11. Section kosong jangan diisi dummy — biarkan array kosong
+  11. highlights: gabungkan chat mirip jadi topik singkat (1 baris), sebut siapa yang aktif
+  12. open_questions: pertanyaan yang masih menggantung
+  13. Section kosong = array kosong, jangan mengarang
+  14. JANGAN isi links / top_senders / alias_map — diisi sistem
 
   OUTPUT FORMAT (JSON):
   {
     "period": {"start": "ISO-8601", "end": "ISO-8601"},
     "activity": {"message_count": <int>, "participant_count": <int>},
-    "narrative": "ringkasan naratif lengkap dalam bahasa Indonesia",
-    "highlights": [{"text": "highlight", "source_message_ids": [<id>]}],
+    "narrative": "ringkasan naratif padat dalam bahasa Indonesia",
+    "highlights": [{"text": "Topik singkat — deskripsi + siapa aktif", "source_message_ids": [<id>]}],
     "important_messages": [{"speaker_alias": "PERSON_001", "quote": "kutipan persis", "source_message_id": <id>}],
     "decisions": [{"text": "keputusan", "status": "confirmed|tentative|disputed", "source_message_ids": [<id>]}],
     "tasks": [{"text": "tugas", "assignee_alias": "PERSON_001|null", "due_at": "ISO-8601|null", "source_message_ids": [<id>]}],
@@ -44,13 +47,15 @@ few_shots:
       [124] [PERSON_002] Oke, siap. Siapa yang bawa proyektor?
       [125] [PERSON_003] Saya bawa proyektor
       [126] [PERSON_001] Setuju, rapatnya besok jam 3 sore di balai desa
+      [127] [PERSON_002] Link undangan: https://example.com/rapat
     assistant: |
       {
         "period": {"start": "2026-07-21T08:00:00+07:00", "end": "2026-07-21T20:00:00+07:00"},
         "activity": {"message_count": 45, "participant_count": 3},
-        "narrative": "Dalam percakapan hari ini, PERSON_001 mengusulkan rapat di balai desa besok jam 3 sore. PERSON_003 bersedia membawa proyektor. PERSON_001 mengonfirmasi jadwal rapat.",
+        "narrative": "Grup membahas rapat di balai desa. PERSON_001 mengusulkan jadwal, PERSON_003 bersedia bawa proyektor, lalu jadwal dikonfirmasi. PERSON_002 juga menanyakan proyektor dan membagikan link undangan.",
         "highlights": [
-          {"text": "Rapat di balai desa besok jam 3 sore", "source_message_ids": [123, 126]}
+          {"text": "Rapat balai desa — besok jam 15.00, disepakati PERSON_001", "source_message_ids": [123, 126]},
+          {"text": "Proyektor — PERSON_003 bawa", "source_message_ids": [124, 125]}
         ],
         "important_messages": [
           {"speaker_alias": "PERSON_001", "quote": "Setuju, rapatnya besok jam 3 sore di balai desa", "source_message_id": 126}

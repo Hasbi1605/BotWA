@@ -35,6 +35,19 @@ class ScheduleCandidateOutput(BaseModel):
     source_message_ids: list[int]
 
 
+class SharedLink(BaseModel):
+    """URL shared in chat — filled deterministically, not by the model."""
+    url: str
+    sender_alias: Optional[str] = None
+    source_message_id: Optional[int] = None
+
+
+class TopSender(BaseModel):
+    """Most active participants — filled deterministically."""
+    alias: str
+    count: int
+
+
 class SummaryOutput(BaseModel):
     period: dict  # {start: ISO-8601, end: ISO-8601}
     activity: dict  # {message_count: int, participant_count: int}
@@ -46,3 +59,8 @@ class SummaryOutput(BaseModel):
     schedule_candidates: list[ScheduleCandidateOutput] = []
     documents: list[str] = []
     open_questions: list[str] = []
+    # Deterministic enrichments (preprocessor / gateway may also fill these)
+    links: list[SharedLink] = []
+    top_senders: list[TopSender] = []
+    # name -> PERSON_xxx for remapping at render time
+    alias_map: dict[str, str] = {}

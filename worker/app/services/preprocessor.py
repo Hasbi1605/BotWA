@@ -1,12 +1,20 @@
 from __future__ import annotations
+import re
 import structlog
 from typing import Any
+from urllib.parse import urlparse
 
 logger = structlog.get_logger()
 
+# URLs shared in WhatsApp chat (http/https + bare www.)
+URL_RE = re.compile(
+    r"(?P<url>https?://[^\s<>\"']+|www\.[^\s<>\"']+)",
+    re.IGNORECASE,
+)
+
 
 class Preprocessor:
-    """Removes noise, assigns pseudonym aliases, and builds reply chains."""
+    """Removes noise, assigns pseudonym aliases, extracts links, ranks senders."""
 
     # Messages matching these patterns are considered noise
     NOISE_PATTERNS = [
@@ -21,33 +29,55 @@ class Preprocessor:
         Process raw messages into AI-ready format.
 
         Returns:
-            PreprocessResult with aliases, filtered messages, and reply chains.
+            PreprocessResult with aliases, filtered messages, links, top senders.
         """
-        # Assign aliases
-        alias_map = {}
+        # Assign aliases (stable order of first appearance)
+        alias_map: dict[str, str] = {}
         alias_counter = 1
+        sender_counts: dict[str, int] = {}
 
         for msg in messages:
-            sender = msg.get("sender_name", "Unknown")
+            sender = msg.get("sender_name") or "Unknown"
             if sender not in alias_map:
                 alias_map[sender] = f"PERSON_{alias_counter:03d}"
                 alias_counter += 1
+            sender_counts[sender] = sender_counts.get(sender, 0) + 1
 
-        # Filter noise and build message list
+        # Filter noise and build message list; extract links
         filtered = []
+        links: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
         stats = {"total": len(messages), "noise": 0, "text": 0, "media": 0}
 
         for msg in messages:
-            content = msg.get("content", "").strip()
+            content = (msg.get("content") or "").strip()
             msg_type = msg.get("type", "text")
+            sender = msg.get("sender_name") or "Unknown"
+            alias = alias_map.get(sender, "UNKNOWN")
+
+            # Extract links even from short messages (before noise filter)
+            for match in URL_RE.finditer(content):
+                raw_url = match.group("url").rstrip(".,);]")
+                normalized = raw_url if raw_url.lower().startswith("http") else f"https://{raw_url}"
+                key = normalized.rstrip("/").lower()
+                if key in seen_urls:
+                    continue
+                if not self._looks_like_url(normalized):
+                    continue
+                seen_urls.add(key)
+                links.append({
+                    "url": normalized,
+                    "sender_alias": alias,
+                    "source_message_id": msg.get("id"),
+                })
 
             # Skip empty messages
             if not content and msg_type in ("sticker", "other"):
                 stats["noise"] += 1
                 continue
 
-            # Check if noise
-            if content and self._is_noise(content):
+            # Check if noise (but keep messages that only share a link)
+            if content and self._is_noise(content) and not URL_RE.search(content):
                 stats["noise"] += 1
                 continue
 
@@ -56,9 +86,6 @@ class Preprocessor:
                 stats["text"] += 1
             else:
                 stats["media"] += 1
-
-            sender = msg.get("sender_name", "Unknown")
-            alias = alias_map.get(sender, "UNKNOWN")
 
             filtered.append({
                 "id": msg["id"],
@@ -70,14 +97,31 @@ class Preprocessor:
                 "type": msg_type,
             })
 
+        # Top senders by raw message count (most active first)
+        top_senders = sorted(
+            (
+                {"alias": alias_map[name], "count": count, "name": name}
+                for name, count in sender_counts.items()
+            ),
+            key=lambda x: (-x["count"], x["alias"]),
+        )[:8]
+
         return PreprocessResult(
             messages=filtered,
             alias_map=alias_map,
             stats=stats,
+            links=links,
+            top_senders=top_senders,
         )
 
+    def _looks_like_url(self, url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+            return bool(parsed.netloc and "." in parsed.netloc)
+        except Exception:
+            return False
+
     def _is_noise(self, content: str) -> bool:
-        import re
         content_lower = content.lower().strip()
         for pattern in self.NOISE_PATTERNS:
             if re.match(pattern, content_lower, re.IGNORECASE):
@@ -94,10 +138,14 @@ class PreprocessResult:
         messages: list[dict[str, Any]],
         alias_map: dict[str, str],
         stats: dict[str, int],
+        links: list[dict[str, Any]] | None = None,
+        top_senders: list[dict[str, Any]] | None = None,
     ):
         self.messages = messages
         self.alias_map = alias_map
         self.stats = stats
+        self.links = links or []
+        self.top_senders = top_senders or []
 
     @property
     def participant_count(self) -> int:
