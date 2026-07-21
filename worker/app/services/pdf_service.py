@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import os
 import structlog
 
@@ -9,13 +10,53 @@ from app.services.sensitivity import SensitivityScanner
 
 logger = structlog.get_logger()
 
+PDF_SYSTEM_PROMPT = """Kamu menganalisis dokumen PDF/Word untuk grup KKN / komunitas desa di Indonesia.
+
+TUJUAN: ringkasan YANG LENGKAP dan BERGUNA — bukan cuplikan super-pendek.
+Anggota grup harus bisa bertindak dari ringkasan tanpa membuka ulang PDF.
+
+ATURAN:
+1. Ekstrak SEMUA keputusan, tugas, penugasan nama, tanggal/jam, pertanyaan terbuka, daftar barang.
+2. Jangan mengarang. Jika tidak ada di dokumen, jangan isi.
+3. Pertahankan nama orang, proker, lokasi, tanggal persis seperti dokumen.
+4. Untuk daftar panjang (peralatan, belanjaan): sertakan SEMUA item; boleh digabung per kategori.
+5. Untuk pembagian tugas/peralatan per orang: sebut NAMA + item.
+6. Jangan kutip NIK/rekening/password (sudah disamarkan bila ada).
+7. Bahasa Indonesia jelas, padat tapi lengkap.
+
+OUTPUT JSON (isi array kosong [] jika tidak ada):
+{
+  "title": "judul dokumen",
+  "purpose": "2-4 kalimat: apa dokumen ini & konteks",
+  "sections": [
+    {"heading": "nama section di dokumen", "points": ["poin detail 1", "poin detail 2"]}
+  ],
+  "key_points": ["poin utama lintas section — 5 s/d 12 item, spesifik"],
+  "decisions": ["keputusan final, spesifik"],
+  "tasks": [{"text": "tugas/item", "assignee": "nama atau null", "due": "tanggal/teks atau null"}],
+  "assignments": [{"person": "nama", "items": ["item1", "item2"]}],
+  "schedule": [{"when": "tanggal/jam/minggu", "what": "kegiatan"}],
+  "open_questions": ["pertanyaan yang masih digantung di dokumen"],
+  "shopping_list": ["barang1", "barang2"],
+  "deadlines": [{"date": "YYYY-MM-DD atau teks asli", "description": "apa"}],
+  "source_pages": [{"page": 1, "content": "cuplikan singkat"}]
+}
+
+WAJIB:
+- sections: ikuti struktur dokumen (A, B, C… atau heading asli) bila ada.
+- tasks + assignments: jangan hanya 3-4 item jika dokumen memuat puluhan penugasan.
+- shopping_list / open_questions / schedule: isi jika ada di dokumen.
+- key_points: minimal 5 jika dokumen kaya isi.
+
+Balikkan HANYA JSON valid, tanpa markdown."""
+
 
 class PdfService:
     def __init__(self):
         self.sensitivity_scanner = SensitivityScanner()
 
     async def analyze(self, request) -> dict:
-        """Extract text from PDF/Word, redact sensitive data, analyze, always publishable."""
+        """Extract text from PDF/Word, redact sensitive data, analyze thoroughly."""
         file_path = request.file_path
 
         if not os.path.exists(file_path):
@@ -30,10 +71,15 @@ class PdfService:
                     "error": "No text could be extracted from document",
                 }
 
-            # Redact sensitive patterns — never block / hold for admin
             safe_text, sensitivity_result = self.sensitivity_scanner.redact(extracted_text)
 
-            analysis = await self._analyze_with_ai(safe_text, request.metadata)
+            analysis = await self._analyze_with_ai(
+                safe_text,
+                {
+                    **(request.metadata or {}),
+                    "page_count": page_count or (request.metadata or {}).get("page_count"),
+                },
+            )
             if isinstance(analysis, dict) and analysis.get("error"):
                 return {"status": "error", "error": analysis["error"]}
 
@@ -54,7 +100,6 @@ class PdfService:
             return {"status": "error", "error": str(e)}
 
     def _extract_text(self, file_path: str) -> tuple[str, int]:
-        """Extract text from PDF or Word document."""
         lower = file_path.lower()
         if lower.endswith(".docx") or lower.endswith(".doc"):
             return self._extract_word(file_path)
@@ -66,14 +111,12 @@ class PdfService:
 
             doc = Document(file_path)
             parts = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
-            # tables
             for table in doc.tables:
                 for row in table.rows:
                     cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
                     if cells:
                         parts.append(" | ".join(cells))
             text = "\n".join(parts)
-            # page_count unknown for docx — use 1 as placeholder
             return text, max(1, len(parts) // 40 or 1)
         except ImportError:
             logger.error("python-docx not installed")
@@ -83,7 +126,6 @@ class PdfService:
             raise
 
     def _extract_pdf(self, file_path: str) -> tuple[str, int]:
-        """Extract text from PDF using pdfplumber."""
         text_parts = []
         page_count = 0
 
@@ -95,7 +137,6 @@ class PdfService:
                     if page_text:
                         text_parts.append(f"[Halaman {i+1}]\n{page_text}")
                     else:
-                        # Try OCR for scanned pages
                         try:
                             ocr_text = self._ocr_page(page)
                             if ocr_text:
@@ -109,7 +150,6 @@ class PdfService:
         return "\n\n".join(text_parts), page_count
 
     def _ocr_page(self, page) -> str:
-        """OCR a single page using Tesseract."""
         try:
             image = page.to_image(resolution=300)
             pil_image = image.original
@@ -120,45 +160,32 @@ class PdfService:
             return ""
 
     async def _analyze_with_ai(self, text: str, metadata: dict) -> dict:
-        """Analyze extracted text with AI provider."""
         from app.providers.cascade import ProviderCascade
 
-        system_prompt = """Analisis dokumen (PDF/Word) berikut dan ekstrak informasi penting untuk grup KKN/desa.
-Jangan mengutip nomor identitas, rekening, atau kredensial — teks sudah disamarkan bila ada.
-
-OUTPUT FORMAT (JSON):
-{
-  "title": "judul dokumen",
-  "purpose": "tujuan dokumen (1-2 kalimat)",
-  "key_points": ["poin 1", "poin 2"],
-  "decisions": ["keputusan 1"],
-  "tasks": [{"text": "tugas", "assignee": "nama|null", "due": "tanggal|null"}],
-  "deadlines": [{"date": "YYYY-MM-DD", "description": "deskripsi"}],
-  "source_pages": [{"page": 1, "content": "referensi halaman"}]
-}
-
-Balikkan HANYA JSON, tanpa markdown code block."""
-
-        # Truncate text if too long
-        max_chars = 50000
+        # Keep nearly full short/medium docs; only hard-cap huge files
+        max_chars = 80_000
         if len(text) > max_chars:
-            text = text[:max_chars] + "\n\n[Dokumen dipotong karena terlalu panjang]"
+            text = text[:max_chars] + "\n\n[Dokumen dipotong karena terlalu panjang — prioritaskan bagian awal & daftar penugasan]"
 
-        user_content = f"Dokumen: {metadata.get('filename', 'unknown')}\n"
-        if metadata.get("page_count"):
-            user_content += f"Jumlah halaman: {metadata['page_count']}\n"
-        user_content += f"\nIsi dokumen:\n{text}"
+        user_content = (
+            f"Dokumen: {metadata.get('filename', 'unknown')}\n"
+            f"Jumlah halaman: {metadata.get('page_count') or '?'}\n"
+            f"Panjang teks: {len(text)} karakter\n\n"
+            "Instruksi tambahan: ekstrak sedetail mungkin. "
+            "Jika ada daftar peralatan per orang, timeline, pertanyaan survei, "
+            "rundown mingguan, atau daftar belanja — JANGAN dihilangkan.\n\n"
+            f"Isi dokumen:\n{text}"
+        )
 
         cascade = ProviderCascade()
         for route in cascade.get_routes("pdf"):
             try:
                 result = await cascade.call(
                     route=route,
-                    system_prompt=system_prompt,
+                    system_prompt=PDF_SYSTEM_PROMPT,
                     user_content=user_content,
                     response_format={"type": "json_object"},
                 )
-                import json
                 return json.loads(result.content)
             except Exception as e:
                 logger.warning("PDF route failed", route=route.id, error=str(e))
