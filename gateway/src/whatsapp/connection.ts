@@ -4,6 +4,7 @@ import makeWASocket, {
   WASocket,
   proto,
   Browsers,
+  fetchLatestWaWebVersion,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { join } from 'path';
@@ -80,11 +81,22 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const registered = Boolean(state.creds?.registered);
 
+  // Keep WA Web version current — stale versions increase link/pair failures
+  let version: [number, number, number] | undefined;
+  try {
+    const latest = await fetchLatestWaWebVersion({});
+    version = latest.version;
+    logger.info({ version, isLatest: latest.isLatest }, 'Using WA Web version');
+  } catch (err) {
+    logger.warn({ err }, 'fetchLatestWaWebVersion failed; using Baileys default');
+  }
+
   sock = makeWASocket({
+    version,
     auth: state,
     logger: logger as any,
     // Desktop-like fingerprint reduces some link-device rejections vs custom strings
-    browser: Browsers.ubuntu('Chrome'),
+    browser: Browsers.macOS('Safari'),
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
     keepAliveIntervalMs: 30_000,

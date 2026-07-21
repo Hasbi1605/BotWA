@@ -1,11 +1,11 @@
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
+    python3 make g++ git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
-# Prefer lockfile when present; fall back to npm install for fresh scaffolds
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+# package-lock may pin npm registry builds; github baileys needs npm install
+RUN npm install
 
 FROM deps AS build
 COPY tsconfig.json ./

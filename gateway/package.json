@@ -18,7 +18,7 @@
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@types/qrcode": "^1.5.6",
-    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "@whiskeysockets/baileys": "github:frndchagas/Baileys#fix/ignore-empty-link-code-companion-reg",
     "better-sqlite3": "^11.8.1",
     "fastify": "^5.3.3",
     "luxon": "^3.6.1",
