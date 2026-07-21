@@ -3,6 +3,7 @@ import makeWASocket, {
   DisconnectReason,
   WASocket,
   proto,
+  Browsers,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { join } from 'path';
@@ -18,6 +19,7 @@ const logger = pino({ name: 'whatsapp' });
 let sock: WASocket | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
+let pairingCodeRequested = false;
 
 async function persistQr(config: Config, qr: string): Promise<void> {
   try {
@@ -37,27 +39,70 @@ async function persistQr(config: Config, qr: string): Promise<void> {
   }
 }
 
+function normalizePhone(raw: string): string {
+  // digits only, keep country code (e.g. 62812...)
+  return raw.replace(/\D/g, '');
+}
+
+async function requestPairingCodeIfNeeded(config: Config, socket: WASocket, registered: boolean): Promise<void> {
+  if (registered || pairingCodeRequested) return;
+  if (!config.waBotNumber) {
+    logger.info('WA_BOT_NUMBER not set — using QR pairing only');
+    return;
+  }
+
+  const phone = normalizePhone(config.waBotNumber);
+  if (phone.length < 10) {
+    logger.warn({ phone }, 'WA_BOT_NUMBER looks invalid; skipping pairing code');
+    return;
+  }
+
+  pairingCodeRequested = true;
+  try {
+    // Small delay so the socket is fully initialized
+    await new Promise((r) => setTimeout(r, 2500));
+    const code = await socket.requestPairingCode(phone);
+    mkdirSync(config.tempDir, { recursive: true });
+    const path = join(config.tempDir, 'wa-pairing-code.txt');
+    writeFileSync(path, `${code}\n`, 'utf8');
+    logger.info(
+      { phoneSuffix: phone.slice(-4), code, path },
+      'Pairing code ready — WhatsApp → Linked devices → Link with phone number'
+    );
+  } catch (err) {
+    pairingCodeRequested = false;
+    logger.error({ err }, 'Failed to request pairing code; fall back to QR');
+  }
+}
+
 export async function connectWhatsApp(config: Config): Promise<WASocket> {
   const authDir = join(config.waAuthDir, 'session');
   const { state, saveCreds } = await useMultiFileAuthState(authDir);
+  const registered = Boolean(state.creds?.registered);
 
   sock = makeWASocket({
     auth: state,
     logger: logger as any,
-    browser: ['RembugBot', 'Chrome', '1.0.0'],
+    // Desktop-like fingerprint reduces some link-device rejections vs custom strings
+    browser: Browsers.ubuntu('Chrome'),
     connectTimeoutMs: 60_000,
     defaultQueryTimeoutMs: undefined,
     keepAliveIntervalMs: 30_000,
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
     generateHighQualityLinkPreview: false,
   });
 
   sock.ev.on('creds.update', saveCreds);
 
+  // Prefer pairing code when phone is configured (often more reliable than QR from VPS IPs)
+  void requestPairingCodeIfNeeded(config, sock, registered);
+
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      logger.info('QR code received, scan with WhatsApp Linked Devices');
+      logger.info('QR code received, scan with WhatsApp → Linked devices');
       qrcode.generate(qr, { small: true });
       void persistQr(config, qr);
     }
@@ -76,6 +121,7 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
       } else if (statusCode === DisconnectReason.loggedOut) {
         logger.fatal('Session logged out. Re-pairing required.');
         sock = null;
+        pairingCodeRequested = false;
       } else {
         logger.fatal('Max reconnect attempts reached.');
         sock = null;
@@ -102,7 +148,6 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
   sock.ev.on('messages.update', async (updates) => {
     for (const update of updates) {
       if (update.update?.messageStubType === proto.WebMessageInfo.StubType.REVOKE) {
-        // Message deleted — soft-delete handled when we have group/message context
         logger.debug({ update }, 'Message revoke/update received');
       }
     }
