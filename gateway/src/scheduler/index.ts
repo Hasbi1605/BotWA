@@ -10,6 +10,7 @@ const logger = pino({ name: 'scheduler' });
 
 let morningTask: cron.ScheduledTask | null = null;
 let eveningTask: cron.ScheduledTask | null = null;
+let reminderTask: cron.ScheduledTask | null = null;
 
 export function startScheduler(config: Config): void {
   const tz = config.summaryTimezone;
@@ -22,12 +23,24 @@ export function startScheduler(config: Config): void {
     createSummaryWindows('evening', tz);
   }, { timezone: tz });
 
+  // Sweep due reminders every 5 minutes
+  reminderTask = cron.schedule('*/5 * * * *', () => {
+    const hourKey = new Date().toISOString().slice(0, 13);
+    const minuteBucket = Math.floor(new Date().getMinutes() / 5);
+    jobsRepo.create({
+      type: 'reminder',
+      payload_ref: JSON.stringify({ sweep: true }),
+      idempotency_key: `job:reminder:sweep:${hourKey}:${minuteBucket}`,
+    });
+  }, { timezone: tz });
+
   logger.info({ morning: config.summaryCronMorning, evening: config.summaryCronEvening, tz }, 'Scheduler started');
 }
 
 export function stopScheduler(): void {
   morningTask?.stop();
   eveningTask?.stop();
+  reminderTask?.stop();
   logger.info('Scheduler stopped');
 }
 

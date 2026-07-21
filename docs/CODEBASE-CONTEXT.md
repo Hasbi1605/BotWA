@@ -2,7 +2,9 @@
 
 ## Status saat ini
 
-Repository berisi implementasi penuh RembugBot — asisten grup WhatsApp untuk KKN dan komunitas desa.
+Repository berisi implementasi RembugBot (MVP wiring) — asisten grup WhatsApp untuk KKN dan komunitas desa.
+
+Catatan post-scaffold fixes (2026-07-21): job retry (`pending`+`retrying`), PDF download+job, reminder scheduling, schedule_detect enqueue, Docker paths/network, evidence message IDs di prompt, dependency `zod`, HMAC di `.env.example`.
 
 ## Struktur
 

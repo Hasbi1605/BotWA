@@ -1,6 +1,7 @@
 #!/bin/bash
 # RembugBot Deployment Script
 # Usage: ./scripts/deploy.sh [environment]
+# Migrations run automatically when the gateway process starts.
 
 set -euo pipefail
 
@@ -12,43 +13,38 @@ echo "[$(date)] Deploying RembugBot ($ENVIRONMENT)..."
 
 cd "$PROJECT_DIR/docker"
 
-# Build images
+if [[ ! -f .env ]]; then
+  echo "ERROR: docker/.env missing. Copy from docker/.env.example and fill secrets."
+  exit 1
+fi
+
 echo "[$(date)] Building images..."
-docker compose build --no-cache
+docker compose build
 
-# Run migrations (in gateway container)
-echo "[$(date)] Running migrations..."
-docker compose run --rm gateway npm run migrate
-
-# Stop old containers
 echo "[$(date)] Stopping old containers..."
 docker compose down
 
-# Start new containers
 echo "[$(date)] Starting new containers..."
 docker compose up -d
 
-# Health check
 echo "[$(date)] Waiting for health check..."
-sleep 10
+sleep 15
 
-# Check gateway health
-GATEWAY_HEALTH=$(docker compose exec gateway curl -s http://localhost:3000/health/live || echo "failed")
+GATEWAY_HEALTH=$(docker compose exec -T gateway curl -sf http://localhost:3000/health/live || echo "failed")
 if echo "$GATEWAY_HEALTH" | grep -q '"status":"ok"'; then
-    echo "[$(date)] Gateway health: OK"
+  echo "[$(date)] Gateway health: OK"
 else
-    echo "[$(date)] WARNING: Gateway health check failed"
-    echo "$GATEWAY_HEALTH"
+  echo "[$(date)] WARNING: Gateway health check failed"
+  echo "$GATEWAY_HEALTH"
 fi
 
-# Check worker health
-WORKER_HEALTH=$(docker compose exec worker python -c "import httpx; print(httpx.get('http://localhost:8000/health/live').json())" || echo "failed")
+WORKER_HEALTH=$(docker compose exec -T worker python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health/live').read().decode())" || echo "failed")
 if echo "$WORKER_HEALTH" | grep -q '"status":"ok"'; then
-    echo "[$(date)] Worker health: OK"
+  echo "[$(date)] Worker health: OK"
 else
-    echo "[$(date)] WARNING: Worker health check failed"
-    echo "$WORKER_HEALTH"
+  echo "[$(date)] WARNING: Worker health check failed"
+  echo "$WORKER_HEALTH"
 fi
 
 echo "[$(date)] Deployment completed."
-echo "[$(date)] Check logs: docker compose logs -f"
+echo "[$(date)] Check logs: cd docker && docker compose logs -f"

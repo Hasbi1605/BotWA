@@ -42,8 +42,10 @@ export function getNextPending(): Job | undefined {
   const db = getDb('');
   return db.prepare(
     `SELECT * FROM jobs
-     WHERE status = 'pending' AND (run_after IS NULL OR run_after <= datetime('now'))
-     ORDER BY created_at ASC LIMIT 1`
+     WHERE status IN ('pending', 'retrying')
+       AND (run_after IS NULL OR run_after <= datetime('now'))
+     ORDER BY created_at ASC
+     LIMIT 1`
   ).get() as Job | undefined;
 }
 
@@ -58,6 +60,20 @@ export function updateStatus(id: number, status: string, extra?: Partial<Job>): 
 
   values.push(id);
   db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+}
+
+/** Atomically claim a job and increment attempts. Returns the updated attempt count. */
+export function claimAndIncrementAttempts(id: number): number {
+  const db = getDb('');
+  db.prepare(
+    `UPDATE jobs
+     SET attempts = attempts + 1,
+         status = 'running',
+         updated_at = datetime('now')
+     WHERE id = ?`
+  ).run(id);
+  const row = db.prepare('SELECT attempts FROM jobs WHERE id = ?').get(id) as { attempts: number };
+  return row.attempts;
 }
 
 export function incrementAttempts(id: number): void {

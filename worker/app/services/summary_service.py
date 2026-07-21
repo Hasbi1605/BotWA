@@ -97,9 +97,9 @@ class SummaryService:
                     last_error = f"Validation failed: {validation.errors}"
 
             except Exception as e:
+                # ProviderCascade.call already records circuit-breaker state
                 logger.warning("Route failed", route=route.id, error=str(e))
                 last_error = str(e)
-                self.cascade.record_error(route, e)
                 continue
 
         # All routes failed

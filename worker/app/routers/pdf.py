@@ -24,4 +24,6 @@ async def analyze_pdf(
     service = PdfService()
     result = await service.analyze(request)
 
-    return {"status": "ok", "analysis": result}
+    # Propagate worker-level status (analyzed / held / unprocessable / error)
+    status = result.get("status", "ok") if isinstance(result, dict) else "ok"
+    return {"status": status, "analysis": result, "error": result.get("error") if isinstance(result, dict) else None}

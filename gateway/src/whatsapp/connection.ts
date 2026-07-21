@@ -3,14 +3,12 @@ import makeWASocket, {
   DisconnectReason,
   WASocket,
   proto,
-  makeInMemoryStore,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { join } from 'path';
 import pino from 'pino';
 import type { Config } from '../config/index.js';
 import { handleMessage } from './message-handler.js';
-import { sendMessage } from './outbound.js';
 
 const logger = pino({ name: 'whatsapp' });
 
@@ -82,13 +80,13 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
   sock.ev.on('messages.update', async (updates) => {
     for (const update of updates) {
       if (update.update?.messageStubType === proto.WebMessageInfo.StubType.REVOKE) {
-        // Message deleted - handled in message-handler
+        // Message deleted — soft-delete handled when we have group/message context
+        logger.debug({ update }, 'Message revoke/update received');
       }
     }
   });
 
   sock.ev.on('group-participants.update', async (update) => {
-    // Track new members for consent notification
     logger.info({ update }, 'Group participant update');
   });
 

@@ -26,8 +26,11 @@ WhatsApp Group → Gateway (Node.js/TypeScript + Baileys)
 ### Prerequisites
 
 - Docker & Docker Compose
+- Node.js **20.x** (lokal gateway; production image pakai Node 20)
+- Python **3.11+** (lokal worker)
 - Nomor WhatsApp khusus
 - Token GitHub Models (2 akun)
+- `HMAC_SECRET` minimal 32 karakter + `WORKER_AUTH_TOKEN` minimal 16 karakter
 
 ### Setup
 

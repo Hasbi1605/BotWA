@@ -44,27 +44,30 @@ async function processNextJob(config: Config): Promise<void> {
   const job = jobsRepo.getNextPending();
   if (!job) return;
 
-  jobsRepo.updateStatus(job.id, 'running');
-  jobsRepo.incrementAttempts(job.id);
+  // Claim atomically so attempt count is current for retry decisions
+  const attempts = jobsRepo.claimAndIncrementAttempts(job.id);
+  const jobWithAttempts = { ...job, attempts };
 
   try {
     switch (job.type) {
       case 'summary':
-        await processSummaryJob(job, config);
+        await processSummaryJob(jobWithAttempts, config);
         break;
+      case 'pdf_extract':
       case 'pdf_analyze':
-        await processPdfJob(job, config);
+        await processPdfJob(jobWithAttempts, config);
         break;
       case 'schedule_detect':
-        await processScheduleJob(job, config);
+        await processScheduleJob(jobWithAttempts, config);
         break;
       case 'reminder':
-        await processReminderJob(job, config);
+        await processReminderJob(jobWithAttempts, config);
         break;
-      case 'retention':
+      case 'retention': {
         const { runRetentionCleanup } = await import('../security/retention.js');
         await runRetentionCleanup(config);
         break;
+      }
       default:
         logger.warn({ type: job.type }, 'Unknown job type');
     }
@@ -72,14 +75,17 @@ async function processNextJob(config: Config): Promise<void> {
     jobsRepo.updateStatus(job.id, 'completed');
   } catch (err: any) {
     const errorClass = classifyError(err);
-    logger.error({ err, jobId: job.id, errorClass }, 'Job failed');
+    logger.error({ err, jobId: job.id, errorClass, attempts }, 'Job failed');
 
-    if (job.attempts >= job.max_attempts) {
-      jobsRepo.updateStatus(job.id, 'failed_final', { error_class: errorClass, error_message: err.message });
-      // Notify admin
-      await notifyAdminJobFailed(job, errorClass, config);
+    if (attempts >= job.max_attempts) {
+      jobsRepo.updateStatus(job.id, 'failed_final', {
+        error_class: errorClass,
+        error_message: err.message,
+      });
+      await notifyAdminJobFailed(jobWithAttempts, errorClass, config);
     } else {
-      const retryDelay = job.attempts === 1 ? 15 * 60_000 : 60 * 60_000;
+      // First failure → 15 min, subsequent → 60 min
+      const retryDelay = attempts === 1 ? 15 * 60_000 : 60 * 60_000;
       const runAfter = new Date(Date.now() + retryDelay).toISOString();
       jobsRepo.retryLater(job.id, runAfter);
     }
@@ -127,9 +133,21 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
       model_route: result.model_route,
     });
 
+    // Persist schedule candidates from summary output and enqueue dedicated detect pass
+    await persistScheduleCandidatesFromSummary(summary.group_id, result.output);
+    jobsRepo.create({
+      type: 'schedule_detect',
+      payload_ref: JSON.stringify({
+        groupId: summary.group_id,
+        startAt: summary.start_at,
+        endAt: summary.end_at,
+      }),
+      idempotency_key: `job:schedule_detect:${summary.id}`,
+    });
+
     // Send to group
     const sock = getSocket();
-    if (sock && group.status === 'active') {
+    if (sock && group.status === 'active' && rendered) {
       await sendMessage(sock, group.jid, rendered);
     }
   } else {
@@ -137,27 +155,84 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
   }
 }
 
+async function persistScheduleCandidatesFromSummary(groupId: number, output: any): Promise<void> {
+  const candidates = output?.schedule_candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) return;
+
+  const schedulesRepo = await import('../db/repositories/schedules.repo.js');
+  for (const candidate of candidates) {
+    if (!candidate?.title) continue;
+    schedulesRepo.createCandidate({
+      group_id: groupId,
+      title: candidate.title,
+      date: candidate.date ?? null,
+      time: candidate.time ?? null,
+      location: candidate.location ?? null,
+      ambiguities: candidate.ambiguities ?? [],
+      source_message_ids: candidate.source_message_ids ?? [],
+      expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
+    });
+  }
+}
+
 async function processPdfJob(job: jobsRepo.Job, config: Config): Promise<void> {
   const payload = JSON.parse(job.payload_ref);
   const doc = documentsRepo.findById(payload.documentId);
-  if (!doc) return;
+  if (!doc) throw new Error('Document not found');
+
+  if (!doc.extracted_text_path) {
+    throw new Error('PDF file path missing — media was not downloaded');
+  }
+
+  documentsRepo.updateStatus(doc.id, 'analyzing');
 
   const result = await callWorkerPdfAnalyze({
     document_id: doc.id,
-    file_path: doc.extracted_text_path || '',
+    file_path: doc.extracted_text_path,
     metadata: { filename: doc.filename, page_count: doc.page_count },
   }, config);
 
-  if (result.status === 'ok') {
-    documentsRepo.updateStatus(doc.id, 'analyzed', { analysis_json: JSON.stringify(result.analysis) });
-  } else {
-    documentsRepo.updateStatus(doc.id, 'error', { error_message: result.error });
+  // Worker returns nested analysis / status fields
+  const analysis = result.analysis ?? result;
+  const status = (analysis as any)?.status || result.status;
+
+  if (status === 'held' || (analysis as any)?.reason === 'sensitive_data') {
+    documentsRepo.updateStatus(doc.id, 'held', {
+      sensitivity: 'held',
+      analysis_json: JSON.stringify(analysis),
+    });
+    return;
   }
+
+  if (status === 'unprocessable') {
+    documentsRepo.updateStatus(doc.id, 'unprocessable', {
+      error_message: (analysis as any)?.error || result.error || 'unprocessable',
+    });
+    return;
+  }
+
+  if (status === 'error' || result.status === 'error') {
+    documentsRepo.updateStatus(doc.id, 'error', {
+      error_message: (analysis as any)?.error || result.error || 'PDF analysis failed',
+    });
+    throw new Error((analysis as any)?.error || result.error || 'PDF analysis failed');
+  }
+
+  // status analyzed / ok
+  documentsRepo.updateStatus(doc.id, 'analyzed', {
+    analysis_json: JSON.stringify((analysis as any)?.analysis ?? analysis),
+    page_count: (analysis as any)?.page_count ?? doc.page_count,
+  });
 }
 
 async function processScheduleJob(job: jobsRepo.Job, config: Config): Promise<void> {
   const payload = JSON.parse(job.payload_ref);
   const messages = messagesRepo.findByGroupAndTimeRange(payload.groupId, payload.startAt, payload.endAt);
+
+  if (messages.length === 0) {
+    logger.info({ jobId: job.id }, 'No messages for schedule detect');
+    return;
+  }
 
   const result = await callWorkerScheduleDetect({
     group_id: payload.groupId,

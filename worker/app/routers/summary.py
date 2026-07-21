@@ -30,4 +30,8 @@ async def create_summary(
     service = SummaryService()
     result = await service.generate_summary(request)
 
-    return {"status": "ok", "output": result.output, "model_route": result.model_route}
+    output = result.output
+    if hasattr(output, "model_dump"):
+        output = output.model_dump()
+
+    return {"status": "ok", "output": output, "model_route": result.model_route}

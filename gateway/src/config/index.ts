@@ -10,8 +10,9 @@ const configSchema = z.object({
   workerUrl: z.string().url().default('http://localhost:8000'),
   workerAuthToken: z.string().min(16),
 
-  ghModelsTokenA: z.string().min(1),
-  ghModelsTokenB: z.string().min(1),
+  // Optional on gateway — AI tokens live on the worker; keep for shared .env convenience
+  ghModelsTokenA: z.string().optional().default(''),
+  ghModelsTokenB: z.string().optional().default(''),
 
   retentionMessagesDays: z.number().int().positive().default(14),
   retentionPdfRawHours: z.number().int().positive().default(24),
@@ -23,11 +24,14 @@ const configSchema = z.object({
   summaryCronEvening: z.string().default('0 20 * * *'),
   summaryTimezone: z.string().default('Asia/Jakarta'),
 
-  alertWebhookUrl: z.string().url().optional(),
+  alertWebhookUrl: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
   alertAdminJids: z.array(z.string()).default([]),
 
   hmacKeyVersion: z.number().int().default(1),
   hmacSecret: z.string().min(32),
+
+  /** Directory for downloaded media (PDFs, etc.) */
+  tempDir: z.string().default('./data/temp'),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -51,10 +55,11 @@ export function loadConfig(): Config {
     summaryCronMorning: process.env.SUMMARY_CRON_MORNING ?? '0 8 * * *',
     summaryCronEvening: process.env.SUMMARY_CRON_EVENING ?? '0 20 * * *',
     summaryTimezone: process.env.SUMMARY_TIMEZONE ?? 'Asia/Jakarta',
-    alertWebhookUrl: process.env.ALERT_WEBHOOK_URL,
+    alertWebhookUrl: process.env.ALERT_WEBHOOK_URL ?? '',
     alertAdminJids: (process.env.ALERT_ADMIN_JIDS ?? '').split(',').filter(Boolean),
     hmacKeyVersion: parseInt(process.env.HMAC_KEY_VERSION ?? '1', 10),
     hmacSecret: process.env.HMAC_SECRET ?? '',
+    tempDir: process.env.TEMP_DIR ?? './data/temp',
   };
 
   return configSchema.parse(raw);

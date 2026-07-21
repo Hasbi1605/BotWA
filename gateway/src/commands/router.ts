@@ -233,10 +233,11 @@ async function handleSchedule(sock: WASocket, groupJid: string, ctx: CommandCont
 
   if (subCommand === 'tambah' && args.length >= 3) {
     // Parse: .jadwal tambah "judul" DD-MM-YYYY HH:mm "lokasi"
-    const titleMatch = content.match(/"([^"]+)"/);
+    const raw = ctx.normalized.content;
+    const titleMatch = raw.match(/"([^"]+)"/);
     const dateMatch = args.find(a => a.match(/\d{2}-\d{2}-\d{4}/));
     const timeMatch = args.find(a => a.match(/\d{2}:\d{2}/));
-    const locMatch = content.match(/"([^"]+)"\s*$/);
+    const locMatch = raw.match(/"([^"]+)"\s*$/);
 
     if (!titleMatch || !dateMatch) {
       await sendMessage(sock, groupJid, 'Format: *.jadwal tambah "judul" DD-MM-YYYY HH:mm "lokasi"');
@@ -253,6 +254,11 @@ async function handleSchedule(sock: WASocket, groupJid: string, ctx: CommandCont
       location: locMatch?.[1] || null,
     });
 
+    // Schedule day-before + two-hours-before reminders
+    const { scheduleRemindersFor } = await import('../db/repositories/reminders.repo.js');
+    scheduleRemindersFor(schedule.id, schedule.starts_at);
+    await enqueueReminderSweep(ctx);
+
     await sendMessage(sock, groupJid, `✅ Jadwal ditambahkan: #${schedule.id} ${schedule.title}`);
     return;
   }
@@ -267,6 +273,10 @@ async function handleSchedule(sock: WASocket, groupJid: string, ctx: CommandCont
     }
 
     const schedule = schedulesRepo.confirmCandidate(candidateId);
+    const { scheduleRemindersFor } = await import('../db/repositories/reminders.repo.js');
+    scheduleRemindersFor(schedule.id, schedule.starts_at);
+    await enqueueReminderSweep(ctx);
+
     await sendMessage(sock, groupJid, `✅ Jadwal dikonfirmasi: #${schedule.id} ${schedule.title}`);
     return;
   }
@@ -304,6 +314,7 @@ async function handlePdfCommand(sock: WASocket, groupJid: string, ctx: CommandCo
   const subCommand = args[0];
   const docId = parseInt(args[1], 10);
   const documentsRepo = await import('../db/repositories/documents.repo.js');
+  const jobsRepo = await import('../db/repositories/jobs.repo.js');
   const doc = documentsRepo.findById(docId);
 
   if (!doc || doc.group_id !== ctx.group.id) {
@@ -313,15 +324,37 @@ async function handlePdfCommand(sock: WASocket, groupJid: string, ctx: CommandCo
 
   if (subCommand === 'proses') {
     documentsRepo.updateStatus(docId, 'pending');
+    jobsRepo.create({
+      type: 'pdf_analyze',
+      payload_ref: JSON.stringify({ documentId: docId }),
+      idempotency_key: `job:pdf_analyze:retry:${docId}:${Date.now()}`,
+    });
     await sendMessage(sock, groupJid, `📄 PDF #${docId} akan diproses ulang.`);
     return;
   }
 
   if (subCommand === 'izinkan') {
     documentsRepo.updateStatus(docId, 'pending', { sensitivity: 'cleared_by_admin' });
+    jobsRepo.create({
+      type: 'pdf_analyze',
+      payload_ref: JSON.stringify({ documentId: docId }),
+      idempotency_key: `job:pdf_analyze:allow:${docId}:${Date.now()}`,
+    });
     await sendMessage(sock, groupJid, `✅ PDF #${docId} diizinkan untuk diproses.`);
     return;
   }
 
   await sendMessage(sock, groupJid, 'Perintah PDF tidak dikenal.');
+}
+
+/** Ensure a periodic reminder sweep job exists so due reminders get sent. */
+async function enqueueReminderSweep(ctx: CommandContext): Promise<void> {
+  const jobsRepo = await import('../db/repositories/jobs.repo.js');
+  // Idempotent hourly key keeps queue small while still processing new reminders
+  const hourKey = new Date().toISOString().slice(0, 13);
+  jobsRepo.create({
+    type: 'reminder',
+    payload_ref: JSON.stringify({ groupId: ctx.group.id }),
+    idempotency_key: `job:reminder:sweep:${hourKey}`,
+  });
 }

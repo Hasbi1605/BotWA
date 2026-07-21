@@ -107,10 +107,11 @@ class PreprocessResult:
         return self.alias_map.get(sender_name, "UNKNOWN")
 
     def to_prompt_context(self) -> str:
-        """Format messages for AI prompt."""
+        """Format messages for AI prompt with stable message IDs for evidence binding."""
         lines = []
         for msg in self.messages:
-            prefix = f"[{msg['alias']}]"
+            # Format matches SUMMARY_SYSTEM_PROMPT: [id:NUMBER] [PERSON_XXX] isi
+            prefix = f"[id:{msg['id']}] [{msg['alias']}]"
             if msg.get("reply_to"):
                 prefix += f" (reply to {msg['reply_to']})"
             lines.append(f"{prefix} {msg['content']}")

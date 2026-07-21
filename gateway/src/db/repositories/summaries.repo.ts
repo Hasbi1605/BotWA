@@ -41,7 +41,8 @@ export function findById(id: number): SummaryWindow | undefined {
 
 export function updateStatus(id: number, status: string, extra?: Partial<SummaryWindow>): void {
   const db = getDb('');
-  const sets = ['status = ?', 'updated_at = datetime(\'now\')'];
+  // summary_windows has no updated_at column
+  const sets = ['status = ?'];
   const values: any[] = [status];
 
   if (extra?.rendered_text !== undefined) {

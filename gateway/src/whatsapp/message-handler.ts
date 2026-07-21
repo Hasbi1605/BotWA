@@ -1,4 +1,5 @@
 import type { WASocket, proto } from '@whiskeysockets/baileys';
+import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import type { Config } from '../config/index.js';
 import { isAllowlisted } from '../config/allowlist.js';
 import { normalizeMessage } from './normalizer.js';
@@ -6,10 +7,13 @@ import * as groupsRepo from '../db/repositories/groups.repo.js';
 import * as participantsRepo from '../db/repositories/participants.repo.js';
 import * as messagesRepo from '../db/repositories/messages.repo.js';
 import * as documentsRepo from '../db/repositories/documents.repo.js';
+import * as jobsRepo from '../db/repositories/jobs.repo.js';
 import { hmacJid } from '../security/hmac.js';
 import { handleCommand } from '../commands/router.js';
 import pino from 'pino';
 import { createHash } from 'crypto';
+import { mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
 
 const logger = pino({ name: 'message-handler' });
 
@@ -35,10 +39,11 @@ export async function handleMessage(
   }
 
   // Skip processing if group is not active (but allow .aktifkan command)
-  const isCommand = msg.message?.conversation?.startsWith('.') ||
-                    msg.message?.extendedTextMessage?.text?.startsWith('.');
-  const isActivation = msg.message?.conversation?.startsWith('.aktifkan') ||
-                       msg.message?.extendedTextMessage?.text?.startsWith('.aktifkan');
+  const textPreview =
+    msg.message?.conversation ||
+    msg.message?.extendedTextMessage?.text ||
+    '';
+  const isActivation = textPreview.trim().toLowerCase().startsWith('.aktifkan');
 
   if (group.status !== 'active' && !isActivation) return;
 
@@ -56,8 +61,9 @@ export async function handleMessage(
 
     // Update group name if empty
     if (!group.name && groupMeta.subject) {
-      const db = (await import('../db/index.js')).getDb('');
+      const db = (await import('../db/index.js')).getDb(config.dbPath);
       db.prepare('UPDATE groups SET name = ? WHERE id = ?').run(groupMeta.subject, group.id);
+      group = { ...group, name: groupMeta.subject };
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to fetch group metadata');
@@ -99,16 +105,15 @@ export async function handleMessage(
 
   if (!savedMsg) return; // duplicate
 
-  // Handle documents (PDF)
-  if (normalized.type === 'document' && normalized.documentInfo?.mimeType === 'application/pdf') {
-    const hash = createHash('sha256').update(normalized.documentInfo.data || '').digest('hex');
-    documentsRepo.create({
-      message_id: savedMsg.id,
-      group_id: group.id,
-      hash,
-      filename: normalized.documentInfo.fileName || 'document.pdf',
-      mime_type: normalized.documentInfo.mimeType,
-      file_size: normalized.documentInfo.fileLength || 0,
+  // Handle documents (PDF): download media, persist file, enqueue analysis job
+  if (normalized.type === 'document' && isPdf(normalized.documentInfo?.mimeType, normalized.documentInfo?.fileName)) {
+    await handleIncomingPdf(sock, msg, {
+      groupId: group.id,
+      messageDbId: savedMsg.id,
+      filename: normalized.documentInfo?.fileName || 'document.pdf',
+      mimeType: normalized.documentInfo?.mimeType || 'application/pdf',
+      fileLength: normalized.documentInfo?.fileLength || 0,
+      config,
     });
   }
 
@@ -117,4 +122,73 @@ export async function handleMessage(
     msgId: normalized.messageId,
     type: normalized.type,
   }, 'Message stored');
+}
+
+function isPdf(mimeType?: string, fileName?: string): boolean {
+  if (mimeType === 'application/pdf') return true;
+  if (fileName?.toLowerCase().endsWith('.pdf')) return true;
+  return false;
+}
+
+async function handleIncomingPdf(
+  sock: WASocket,
+  msg: proto.IWebMessageInfo,
+  opts: {
+    groupId: number;
+    messageDbId: number;
+    filename: string;
+    mimeType: string;
+    fileLength: number;
+    config: Config;
+  }
+): Promise<void> {
+  try {
+    const buffer = await downloadMediaMessage(
+      msg,
+      'buffer',
+      {},
+      {
+        logger: logger as any,
+        reuploadRequest: sock.updateMediaMessage.bind(sock),
+      }
+    ) as Buffer;
+
+    if (!buffer || buffer.length === 0) {
+      logger.warn({ messageDbId: opts.messageDbId }, 'Empty PDF buffer downloaded');
+      return;
+    }
+
+    const hash = createHash('sha256').update(buffer).digest('hex');
+    const doc = documentsRepo.create({
+      message_id: opts.messageDbId,
+      group_id: opts.groupId,
+      hash,
+      filename: opts.filename,
+      mime_type: opts.mimeType,
+      file_size: opts.fileLength || buffer.length,
+    });
+
+    if (!doc) {
+      logger.info({ hash }, 'Duplicate PDF skipped');
+      return;
+    }
+
+    const dir = join(opts.config.tempDir, 'pdfs', String(opts.groupId));
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, `${doc.id}-${hash.slice(0, 12)}.pdf`);
+    writeFileSync(filePath, buffer);
+
+    // Store raw PDF path (worker opens this as the PDF file)
+    documentsRepo.updateStatus(doc.id, 'pending', { extracted_text_path: filePath });
+
+    jobsRepo.create({
+      type: 'pdf_analyze',
+      payload_ref: JSON.stringify({ documentId: doc.id }),
+      idempotency_key: `job:pdf_analyze:${doc.id}`,
+    });
+
+    logger.info({ documentId: doc.id, filePath, bytes: buffer.length }, 'PDF stored and analysis job enqueued');
+  } catch (err) {
+    logger.error({ err, messageDbId: opts.messageDbId }, 'Failed to download/store PDF');
+  }
 }

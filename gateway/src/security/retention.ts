@@ -3,7 +3,7 @@ import * as messagesRepo from '../db/repositories/messages.repo.js';
 import * as documentsRepo from '../db/repositories/documents.repo.js';
 import * as summariesRepo from '../db/repositories/summaries.repo.js';
 import * as auditRepo from '../db/repositories/audit.repo.js';
-import * as schedulesRepo from '../db/repositories/schedules.repo.ts.js';
+import * as schedulesRepo from '../db/repositories/schedules.repo.js';
 import pino from 'pino';
 
 const logger = pino({ name: 'retention' });

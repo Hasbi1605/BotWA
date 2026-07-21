@@ -1,43 +1,60 @@
 services:
   gateway:
     build:
-      context: ./gateway
+      context: ../gateway
       dockerfile: Dockerfile
-      target: base
+      target: deps
     container_name: rembugbot-gateway-dev
-    command: ["npm", "run", "dev"]
+    working_dir: /app
+    command: ["npx", "tsx", "watch", "src/index.ts"]
     volumes:
-      - ./gateway/src:/app/src
-      - ./gateway/config:/app/config
-      - ./gateway/tests:/app/tests
+      - ../gateway/src:/app/src
+      - ../gateway/package.json:/app/package.json
+      - ../gateway/tsconfig.json:/app/tsconfig.json
       - db-data:/data
       - wa-auth:/data/auth
       - temp-files:/data/temp
     env_file: .env
     environment:
       - NODE_ENV=development
+      - DB_PATH=/data/rembugbot.db
+      - WA_AUTH_DIR=/data/auth
+      - TEMP_DIR=/data/temp
+      - WORKER_URL=http://worker:8000
     ports:
       - "3000:3000"
     networks:
-      - internal
+      - rembugbot
+    depends_on:
+      - worker
 
   worker:
     build:
-      context: ./worker
+      context: ../worker
       dockerfile: Dockerfile
       target: base
     container_name: rembugbot-worker-dev
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
     volumes:
-      - ./worker/app:/app/app
-      - ./worker/config:/app/config
-      - ./worker/tests:/app/tests
+      - ../worker/app:/app/app
+      - ../worker/config:/app/config
       - temp-files:/data/temp
     env_file: .env
+    environment:
+      - TEMP_DIR=/data/temp
     ports:
       - "8000:8000"
     networks:
-      - internal
+      - rembugbot
 
 volumes:
   wa-auth:
@@ -45,5 +62,5 @@ volumes:
   temp-files:
 
 networks:
-  internal:
+  rembugbot:
     driver: bridge

@@ -1,46 +1,56 @@
 services:
   gateway:
     build:
-      context: ./gateway
+      context: ../gateway
       dockerfile: Dockerfile
     container_name: rembugbot-gateway
     restart: unless-stopped
     env_file: .env
     environment:
       - NODE_ENV=production
+      - DB_PATH=/data/rembugbot.db
+      - WA_AUTH_DIR=/data/auth
+      - TEMP_DIR=/data/temp
+      - WORKER_URL=http://worker:8000
     volumes:
       - wa-auth:/data/auth
       - db-data:/data
       - temp-files:/data/temp
-    ports: []
     networks:
-      - internal
-    mem_limit: 256m
-    memswap_limit: 256m
+      - rembugbot
+    mem_limit: 512m
+    memswap_limit: 512m
     depends_on:
       worker:
         condition: service_healthy
 
   worker:
     build:
-      context: ./worker
+      context: ../worker
       dockerfile: Dockerfile
     container_name: rembugbot-worker
     restart: unless-stopped
     env_file: .env
+    environment:
+      - TEMP_DIR=/data/temp
     volumes:
       - temp-files:/data/temp
-    ports: []
     networks:
-      - internal
+      - rembugbot
     mem_limit: 1280m
     memswap_limit: 1280m
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health/live').raise_for_status()"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
 volumes:
   wa-auth:
@@ -51,6 +61,6 @@ volumes:
     driver: local
 
 networks:
-  internal:
+  rembugbot:
     driver: bridge
-    internal: true
+    # NOT internal — gateway needs WhatsApp, worker needs GitHub Models

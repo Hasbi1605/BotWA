@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import re
+from dataclasses import dataclass
+
 import structlog
-from typing import Any
 
 logger = structlog.get_logger()
 
@@ -17,28 +19,6 @@ SENSITIVE_PATTERNS = [
 ]
 
 
-class SensitivityScanner:
-    """Scans PDF text for sensitive data patterns before sending to AI."""
-
-    def scan(self, text: str) -> SensitivityResult:
-        findings = []
-        for pattern, label in SENSITIVE_PATTERNS:
-            matches = re.findall(pattern, text)
-            if matches:
-                findings.append(SensitivityFinding(
-                    pattern=label,
-                    count=len(matches),
-                    # Don't include actual matched values in findings
-                ))
-
-        is_sensitive = len(findings) > 0
-        return SensitivityResult(
-            is_sensitive=is_sensitive,
-            findings=findings,
-            summary=f"Ditemukan {len(findings)} pola data sensitif" if is_sensitive else "Tidak ada data sensitif terdeteksi",
-        )
-
-
 @dataclass
 class SensitivityFinding:
     pattern: str
@@ -52,4 +32,29 @@ class SensitivityResult:
     summary: str
 
 
-from dataclasses import dataclass
+class SensitivityScanner:
+    """Scans PDF text for sensitive data patterns before sending to AI."""
+
+    def scan(self, text: str) -> SensitivityResult:
+        findings = []
+        for pattern, label in SENSITIVE_PATTERNS:
+            matches = re.findall(pattern, text)
+            if matches:
+                findings.append(
+                    SensitivityFinding(
+                        pattern=label,
+                        count=len(matches),
+                        # Don't include actual matched values in findings
+                    )
+                )
+
+        is_sensitive = len(findings) > 0
+        return SensitivityResult(
+            is_sensitive=is_sensitive,
+            findings=findings,
+            summary=(
+                f"Ditemukan {len(findings)} pola data sensitif"
+                if is_sensitive
+                else "Tidak ada data sensitif terdeteksi"
+            ),
+        )
