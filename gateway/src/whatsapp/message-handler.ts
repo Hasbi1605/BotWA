@@ -30,7 +30,13 @@ export async function handleMessage(
   if (!groupJid?.endsWith('@g.us')) return;
 
   // Check allowlist
-  if (!isAllowlisted(groupJid, config)) return;
+  if (!isAllowlisted(groupJid, config)) {
+    logger.info(
+      { groupJid, allowlist: config.waGroupAllowlist },
+      'Ignoring group message (not in WA_GROUP_ALLOWLIST)'
+    );
+    return;
+  }
 
   // Get or create group in DB
   let group = groupsRepo.findByJid(groupJid);

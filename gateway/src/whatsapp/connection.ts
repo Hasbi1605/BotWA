@@ -143,6 +143,20 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
     if (connection === 'open') {
       reconnectAttempts = 0;
       logger.info('WhatsApp connected successfully');
+      // List groups so operators can copy JIDs into WA_GROUP_ALLOWLIST
+      void (async () => {
+        try {
+          const groups = await sock!.groupFetchAllParticipating();
+          const list = Object.values(groups).map((g) => ({
+            jid: g.id,
+            subject: g.subject,
+            size: g.participants?.length,
+          }));
+          logger.info({ groups: list, count: list.length }, 'Participating WhatsApp groups');
+        } catch (err) {
+          logger.warn({ err }, 'Failed to list participating groups');
+        }
+      })();
     }
   });
 
