@@ -2,7 +2,8 @@
 
 ## Status
 
-In progress — release gate lokal selesai; AI endpoint/cascade di-align ke Magang-Istana; provisioning AWS belum dijalankan (menunggu konfirmasi + role non-root).
+Staging live on `t4g.small` (2 GiB) — stack `rembugbot-staging`, instance `i-0141eb0c4227d3347`, region `ap-southeast-1`.
+Containers healthy; gateway readiness `degraded` only until WhatsApp QR scan.
 
 ## Tujuan
 
