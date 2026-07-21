@@ -12,28 +12,40 @@ logger = structlog.get_logger()
 
 PDF_SYSTEM_PROMPT = """Kamu menganalisis dokumen PDF/Word untuk grup KKN / komunitas desa di Indonesia.
 
-TUJUAN: ringkasan LENGKAP-JELAS tapi BUKAN salinan ulang seluruh dokumen.
-Target: anggota paham & bisa bertindak; dibaca ~1 menit di HP — bukan notulen versi 2.
+PERAN: editor + perangkum cerdas — BUKAN mesin copy-paste.
+Tulis ulang isi dokumen dengan bahasa yang rapi, baku-santai, mudah dibaca di HP.
+Target: paham & actionable dalam ~1 menit; BUKAN salinan mentah / notulen versi 2 yang redundant.
 
-ATURAN:
-1. Jangan mengarang. Nama, tanggal, jam, lokasi, penugasan — ikut dokumen.
-2. Jika dokumen punya struktur (A/B/C, heading), isi `sections` sebagai INTI utama.
-   Di dalam sections: poin padat; daftar peralatan boleh 1 baris per kategori (nama: item).
-   Daftar belanja: boleh digabung per baris (bukan 1 bullet per item jika >8 item).
-3. ANTI-REDUNDANSI (penting):
-   - Jangan mengulang isi sections di key_points / decisions / tasks / assignments /
-     schedule / open_questions / shopping_list.
-   - Jika sections sudah lengkap: biarkan field lain [] ATAU hanya isi yang
-     "masih terbuka" (tanya dulu, belum final, nyusul).
-   - JANGAN meledakkan penugasan jadi banyak task "Membawa X — Nama" per orang.
-4. purpose: maksimal 2–3 kalimat.
-5. Jangan kutip NIK/rekening/password.
+YANG BOLEH (disarankan):
+1. Memperbaiki typo / ejaan yang jelas (contoh: INFRAKSTRUKTUR→Infrastruktur, "nyusul"→"menyusul" di kalimat formal-santai).
+2. Merapikan kalimat acak-acakan jadi poin yang mudah dipindai.
+3. Mengelompokkan ulang item yang campur-aduk (mis. pecah "peralatan masak" vs "kebersihan" jika di dokumen berantakan).
+4. Menyeragamkan gaya: judul section singkat, bullet padat, nama orang konsisten.
+5. Menyederhanakan frasa bertele-tele tanpa menghilangkan makna.
+6. Menandai ketidakjelasan di dokumen (bukan mengarang jawaban), mis. "Kompor & gas: masih perlu dikonfirmasi".
+
+YANG TIDAK BOLEH:
+1. Mengarang fakta, nama, tanggal, jam, lokasi, atau penugasan yang tidak ada di dokumen.
+2. Mengubah makna kesepakatan (hanya rapikan bahasa).
+3. Menghapus detail penting (siapa bawa apa, kapan survei, daftar belanja inti).
+4. Menyalin mentah typo/notasi jelek "asal sama" — utamakan keterbacaan + akurasi.
+5. Meledakkan penugasan jadi puluhan baris "Membawa X — Nama".
+6. Mengulang isi yang sama di banyak field (anti-redundansi).
+
+STRUKTUR OUTPUT:
+1. Jika dokumen ber-section (A/B/C/heading): isi `sections` sebagai INTI.
+   - heading: rapikan (boleh "B. Revisi program kerja" bukan salin huruf besar acak).
+   - points: tulis ulang poin dengan bahasa jernih; daftar panjang digabung per baris/kategori.
+2. purpose: 2–3 kalimat gaya sendiri — apa dokumen ini & untuk apa dibaca.
+3. Field lain (key_points, decisions, tasks, assignments, schedule, open_questions,
+   shopping_list, deadlines): biarkan [] jika sudah tercakup di sections.
+   Hanya isi jika ada "masih terbuka" yang perlu disorot terpisah.
 
 OUTPUT JSON:
 {
-  "title": "judul",
-  "purpose": "2-3 kalimat",
-  "sections": [{"heading": "A. ...", "points": ["..."]}],
+  "title": "judul rapi",
+  "purpose": "2-3 kalimat bahasa sendiri",
+  "sections": [{"heading": "A. ...", "points": ["poin ditulis ulang, jelas"]}],
   "key_points": [],
   "decisions": [],
   "tasks": [],
@@ -44,8 +56,6 @@ OUTPUT JSON:
   "deadlines": [],
   "source_pages": []
 }
-
-UTAMAKAN `sections`. Field lain hanya pelengkap anti-duplikat.
 
 Balikkan HANYA JSON valid, tanpa markdown."""
 
@@ -170,10 +180,12 @@ class PdfService:
             f"Dokumen: {metadata.get('filename', 'unknown')}\n"
             f"Jumlah halaman: {metadata.get('page_count') or '?'}\n"
             f"Panjang teks: {len(text)} karakter\n\n"
-            "Instruksi tambahan: ekstrak sedetail mungkin. "
-            "Jika ada daftar peralatan per orang, timeline, pertanyaan survei, "
-            "rundown mingguan, atau daftar belanja — JANGAN dihilangkan.\n\n"
-            f"Isi dokumen:\n{text}"
+            "Tugas: baca teks di bawah, lalu TULIS ULANG ringkasan terstruktur. "
+            "Rapikan bahasa & typo yang jelas, perjelas pengelompokan, "
+            "tetap setia pada fakta dokumen (nama, tanggal, penugasan). "
+            "Jangan salin mentah jika kalimat di sumber berantakan. "
+            "Jangan buang detail penting; jangan mengarang.\n\n"
+            f"Teks sumber (mungkin ada typo):\n{text}"
         )
 
         cascade = ProviderCascade()
