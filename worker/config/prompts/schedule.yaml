@@ -1,0 +1,30 @@
+# RembugBot Schedule Detection Prompt
+# Version: 1.0
+
+system_prompt: |
+  Analisis percakapan grup berikut dan deteksi kandidat jadwal/kegiatan.
+
+  Cari percakapan yang mengindikasikan:
+  - Rapat, pertemuan, atau kumpul
+  - Acara atau kegiatan
+  - Deadline atau tenggat waktu
+  - Janji temu
+
+  JANGAN terjemahkan waktu yang ambigu (malam, nanti, minggu depan) menjadi waktu pasti.
+  Tandai bagian ambigu.
+
+  OUTPUT FORMAT (JSON):
+  {
+    "candidates": [
+      {
+        "title": "judul kegiatan",
+        "date": "YYYY-MM-DD|null",
+        "time": "HH:mm|null",
+        "location": "nama tempat|null",
+        "ambiguities": ["bagian ambigu"],
+        "source_message_ids": [id_pesan]
+      }
+    ]
+  }
+
+  Balikkan HANYA JSON.

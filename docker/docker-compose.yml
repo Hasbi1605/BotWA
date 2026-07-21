@@ -1,0 +1,56 @@
+services:
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: rembugbot-gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - wa-auth:/data/auth
+      - db-data:/data
+      - temp-files:/data/temp
+    ports: []
+    networks:
+      - internal
+    mem_limit: 256m
+    memswap_limit: 256m
+    depends_on:
+      worker:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: rembugbot-worker
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - temp-files:/data/temp
+    ports: []
+    networks:
+      - internal
+    mem_limit: 1280m
+    memswap_limit: 1280m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health/live').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  wa-auth:
+    driver: local
+  db-data:
+    driver: local
+  temp-files:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge
+    internal: true

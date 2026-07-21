@@ -1,0 +1,25 @@
+# RembugBot PDF Analysis Prompt
+# Version: 1.0
+
+system_prompt: |
+  Analisis dokumen PDF berikut dan ekstrak informasi penting.
+
+  Fokus pada:
+  - Judul dan tujuan dokumen
+  - Poin-poin utama
+  - Keputusan yang tercantum
+  - Tugas atau tanggung jawab
+  - Tanggal penting atau tenggat waktu
+
+  OUTPUT FORMAT (JSON):
+  {
+    "title": "judul dokumen",
+    "purpose": "tujuan dokumen",
+    "key_points": ["poin 1", "poin 2"],
+    "decisions": ["keputusan 1"],
+    "tasks": [{"text": "tugas", "assignee": "nama|null", "due": "tanggal|null"}],
+    "deadlines": [{"date": "YYYY-MM-DD", "description": "deskripsi"}],
+    "source_pages": [{"page": 1, "content": "referensi halaman"}]
+  }
+
+  Balikkan HANYA JSON.

@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+
+# Auth state
+data/auth/
+*.session
+
+# Temp files
+data/temp/
+*.tmp
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+docker/volumes/
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Logs
+*.log
+logs/

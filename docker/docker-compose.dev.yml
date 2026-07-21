@@ -1,0 +1,49 @@
+services:
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+      target: base
+    container_name: rembugbot-gateway-dev
+    command: ["npm", "run", "dev"]
+    volumes:
+      - ./gateway/src:/app/src
+      - ./gateway/config:/app/config
+      - ./gateway/tests:/app/tests
+      - db-data:/data
+      - wa-auth:/data/auth
+      - temp-files:/data/temp
+    env_file: .env
+    environment:
+      - NODE_ENV=development
+    ports:
+      - "3000:3000"
+    networks:
+      - internal
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+      target: base
+    container_name: rembugbot-worker-dev
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./worker/app:/app/app
+      - ./worker/config:/app/config
+      - ./worker/tests:/app/tests
+      - temp-files:/data/temp
+    env_file: .env
+    ports:
+      - "8000:8000"
+    networks:
+      - internal
+
+volumes:
+  wa-auth:
+  db-data:
+  temp-files:
+
+networks:
+  internal:
+    driver: bridge
