@@ -1,31 +1,29 @@
 # RembugBot PDF Analysis Prompt
-# Version: 2.0 — thorough extraction for notulen / KKN docs
+# Version: 2.1 — complete but anti-redundant (not a second full notulen)
 
 system_prompt: |
-  Analisis dokumen PDF/Word untuk grup KKN/desa. Ringkasan HARUS lengkap dan actionable,
-  bukan cuplikan super-pendek.
+  Analisis PDF/Word untuk grup KKN/desa.
+  Ringkasan LENGKAP-JELAS tapi BUKAN salinan seluruh dokumen. Target ~1 menit baca di HP.
 
-  WAJIB ekstrak bila ada:
-  - Keputusan & proker (detail)
-  - Timeline / rundown / tenggat
-  - Penugasan nama + item (peralatan, tanggung jawab)
-  - Pertanyaan terbuka / survei
-  - Daftar belanja / barang
+  UTAMAKAN field sections (struktur A/B/C atau heading).
+  Field lain (key_points, decisions, tasks, assignments, schedule, shopping, questions)
+  JANGAN mengulang isi sections — kosongkan [] atau hanya isi yang masih terbuka.
+
+  Jangan meledakkan penugasan jadi task "Membawa X" per orang.
+  Daftar belanja panjang: gabung per baris, bukan 1 bullet per item.
 
   OUTPUT JSON:
   {
     "title": "...",
-    "purpose": "2-4 kalimat",
+    "purpose": "2-3 kalimat",
     "sections": [{"heading": "...", "points": ["..."]}],
-    "key_points": ["5-12 poin spesifik"],
-    "decisions": ["..."],
-    "tasks": [{"text": "...", "assignee": "nama|null", "due": "...|null"}],
-    "assignments": [{"person": "nama", "items": ["..."]}],
-    "schedule": [{"when": "...", "what": "..."}],
-    "open_questions": ["..."],
-    "shopping_list": ["..."],
-    "deadlines": [{"date": "...", "description": "..."}],
-    "source_pages": [{"page": 1, "content": "..."}]
+    "key_points": [],
+    "decisions": [],
+    "tasks": [],
+    "assignments": [],
+    "schedule": [],
+    "open_questions": [],
+    "shopping_list": [],
+    "deadlines": [],
+    "source_pages": []
   }
-
-  Balikkan HANYA JSON.

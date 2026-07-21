@@ -12,41 +12,40 @@ logger = structlog.get_logger()
 
 PDF_SYSTEM_PROMPT = """Kamu menganalisis dokumen PDF/Word untuk grup KKN / komunitas desa di Indonesia.
 
-TUJUAN: ringkasan YANG LENGKAP dan BERGUNA — bukan cuplikan super-pendek.
-Anggota grup harus bisa bertindak dari ringkasan tanpa membuka ulang PDF.
+TUJUAN: ringkasan LENGKAP-JELAS tapi BUKAN salinan ulang seluruh dokumen.
+Target: anggota paham & bisa bertindak; dibaca ~1 menit di HP — bukan notulen versi 2.
 
 ATURAN:
-1. Ekstrak SEMUA keputusan, tugas, penugasan nama, tanggal/jam, pertanyaan terbuka, daftar barang.
-2. Jangan mengarang. Jika tidak ada di dokumen, jangan isi.
-3. Pertahankan nama orang, proker, lokasi, tanggal persis seperti dokumen.
-4. Untuk daftar panjang (peralatan, belanjaan): sertakan SEMUA item; boleh digabung per kategori.
-5. Untuk pembagian tugas/peralatan per orang: sebut NAMA + item.
-6. Jangan kutip NIK/rekening/password (sudah disamarkan bila ada).
-7. Bahasa Indonesia jelas, padat tapi lengkap.
+1. Jangan mengarang. Nama, tanggal, jam, lokasi, penugasan — ikut dokumen.
+2. Jika dokumen punya struktur (A/B/C, heading), isi `sections` sebagai INTI utama.
+   Di dalam sections: poin padat; daftar peralatan boleh 1 baris per kategori (nama: item).
+   Daftar belanja: boleh digabung per baris (bukan 1 bullet per item jika >8 item).
+3. ANTI-REDUNDANSI (penting):
+   - Jangan mengulang isi sections di key_points / decisions / tasks / assignments /
+     schedule / open_questions / shopping_list.
+   - Jika sections sudah lengkap: biarkan field lain [] ATAU hanya isi yang
+     "masih terbuka" (tanya dulu, belum final, nyusul).
+   - JANGAN meledakkan penugasan jadi banyak task "Membawa X — Nama" per orang.
+4. purpose: maksimal 2–3 kalimat.
+5. Jangan kutip NIK/rekening/password.
 
-OUTPUT JSON (isi array kosong [] jika tidak ada):
+OUTPUT JSON:
 {
-  "title": "judul dokumen",
-  "purpose": "2-4 kalimat: apa dokumen ini & konteks",
-  "sections": [
-    {"heading": "nama section di dokumen", "points": ["poin detail 1", "poin detail 2"]}
-  ],
-  "key_points": ["poin utama lintas section — 5 s/d 12 item, spesifik"],
-  "decisions": ["keputusan final, spesifik"],
-  "tasks": [{"text": "tugas/item", "assignee": "nama atau null", "due": "tanggal/teks atau null"}],
-  "assignments": [{"person": "nama", "items": ["item1", "item2"]}],
-  "schedule": [{"when": "tanggal/jam/minggu", "what": "kegiatan"}],
-  "open_questions": ["pertanyaan yang masih digantung di dokumen"],
-  "shopping_list": ["barang1", "barang2"],
-  "deadlines": [{"date": "YYYY-MM-DD atau teks asli", "description": "apa"}],
-  "source_pages": [{"page": 1, "content": "cuplikan singkat"}]
+  "title": "judul",
+  "purpose": "2-3 kalimat",
+  "sections": [{"heading": "A. ...", "points": ["..."]}],
+  "key_points": [],
+  "decisions": [],
+  "tasks": [],
+  "assignments": [],
+  "schedule": [],
+  "open_questions": [],
+  "shopping_list": [],
+  "deadlines": [],
+  "source_pages": []
 }
 
-WAJIB:
-- sections: ikuti struktur dokumen (A, B, C… atau heading asli) bila ada.
-- tasks + assignments: jangan hanya 3-4 item jika dokumen memuat puluhan penugasan.
-- shopping_list / open_questions / schedule: isi jika ada di dokumen.
-- key_points: minimal 5 jika dokumen kaya isi.
+UTAMAKAN `sections`. Field lain hanya pelengkap anti-duplikat.
 
 Balikkan HANYA JSON valid, tanpa markdown."""
 
