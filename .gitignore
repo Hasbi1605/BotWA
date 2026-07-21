@@ -53,3 +53,6 @@ htmlcov/
 # Logs
 *.log
 logs/
+
+# Local WhatsApp pairing session
+data/auth-local/
