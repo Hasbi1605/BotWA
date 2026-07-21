@@ -16,6 +16,7 @@ import {
   findParticipant,
   roleFromParticipant,
 } from '../auth/admin.js';
+import { checkRateLimit } from '../auth/rate-limiter.js';
 import pino from 'pino';
 import { createHash } from 'crypto';
 import { mkdirSync, writeFileSync } from 'fs';
@@ -150,10 +151,63 @@ export async function handleMessage(
     });
   }
 
+  // Loss Control: enqueue AI reply for regular chat (any member)
+  if (
+    group.status === 'active' &&
+    (group.reply_mode || 'silent') === 'lc' &&
+    !maybeCommand &&
+    shouldEnqueueLcReply(normalized.type, normalized.content)
+  ) {
+    enqueueLcReply(group.id, savedMsg.id, pushName || 'Anggota');
+  }
+
   logger.debug(
     { groupId: group.id, msgId: normalized.messageId, type: normalized.type },
     'Message stored'
   );
+}
+
+/** Skip pure noise / media-only so LC does not spam. */
+function shouldEnqueueLcReply(type: string, content: string): boolean {
+  if (type !== 'text' && type !== 'image' && type !== 'video') {
+    // documents handled separately; stickers/audio — skip auto roast spam
+    return false;
+  }
+  const t = (content || '').trim();
+  if (type === 'image' || type === 'video') {
+    // caption-only media
+    if (t.length < 2) return false;
+  }
+  if (t.length < 2) return false;
+  // ultra-short ack without question — still allow but short content is ok for roast
+  if (t.length > 1500) return true; // still reply, worker will truncate context
+  return true;
+}
+
+function enqueueLcReply(groupId: number, messageDbId: number, senderName: string): void {
+  // Group-wide: max 20 LC replies per 5 minutes
+  const groupRl = checkRateLimit(`lc:group:${groupId}`, 20, 5 * 60_000);
+  if (!groupRl.allowed) {
+    logger.info({ groupId }, 'LC rate limit (group)');
+    return;
+  }
+  // Soft burst: 8 per minute
+  const burstRl = checkRateLimit(`lc:burst:${groupId}`, 8, 60_000);
+  if (!burstRl.allowed) {
+    logger.info({ groupId }, 'LC rate limit (burst)');
+    return;
+  }
+
+  jobsRepo.create({
+    type: 'chat_reply',
+    payload_ref: JSON.stringify({
+      groupId,
+      messageId: messageDbId,
+      senderName,
+    }),
+    idempotency_key: `job:chat_reply:${messageDbId}`,
+    max_attempts: 2,
+  });
 }
 
 function isSupportedDocument(mimeType?: string, fileName?: string): boolean {

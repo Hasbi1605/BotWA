@@ -4,7 +4,12 @@ import * as jobsRepo from '../db/repositories/jobs.repo.js';
 import * as summariesRepo from '../db/repositories/summaries.repo.js';
 import * as messagesRepo from '../db/repositories/messages.repo.js';
 import * as documentsRepo from '../db/repositories/documents.repo.js';
-import { callWorkerSummary, callWorkerPdfAnalyze, callWorkerScheduleDetect } from '../worker-client/index.js';
+import {
+  callWorkerSummary,
+  callWorkerPdfAnalyze,
+  callWorkerScheduleDetect,
+  callWorkerChatLc,
+} from '../worker-client/index.js';
 import { sendMessage } from '../whatsapp/outbound.js';
 import { getSocket } from '../whatsapp/connection.js';
 import * as groupsRepo from '../db/repositories/groups.repo.js';
@@ -65,6 +70,9 @@ async function processNextJob(config: Config): Promise<void> {
         break;
       case 'reminder':
         await processReminderJob(jobWithAttempts, config);
+        break;
+      case 'chat_reply':
+        await processChatReplyJob(jobWithAttempts, config);
         break;
       case 'retention': {
         const { runRetentionCleanup } = await import('../security/retention.js');
@@ -340,6 +348,48 @@ async function processReminderJob(_job: jobsRepo.Job, _config: Config): Promise<
     }
   }
 }
+
+async function processChatReplyJob(job: jobsRepo.Job, config: Config): Promise<void> {
+  const payload = JSON.parse(job.payload_ref) as {
+    groupId: number;
+    messageId: number;
+    senderName?: string;
+  };
+  const group = groupsRepo.findById(payload.groupId);
+  if (!group || group.status !== 'active') return;
+  if ((group.reply_mode || 'silent') !== 'lc') {
+    logger.info({ groupId: group.id }, 'LC off — skip chat_reply job');
+    return;
+  }
+
+  const msg = messagesRepo.findById(payload.messageId);
+  if (!msg || !msg.content?.trim()) return;
+
+  const recent = messagesRepo.findRecentByGroup(group.id, 18).map((m) => ({
+    sender_name: (m as any).display_name || 'Anggota',
+    content: m.content || '',
+  }));
+
+  const result = await callWorkerChatLc(
+    {
+      group_id: group.id,
+      group_name: group.name || '',
+      sender_name: payload.senderName || 'Anggota',
+      message: msg.content,
+      recent,
+    },
+    config
+  );
+
+  if (result.status !== 'ok' || !result.reply?.trim()) {
+    throw new Error(result.error || 'LC chat empty reply');
+  }
+
+  const sock = getSocket();
+  if (!sock) throw new Error('No WhatsApp socket');
+  await sendMessage(sock, group.jid, result.reply.trim());
+}
+
 
 function classifyError(err: any): string {
   if (err.status === 429 || err.statusCode === 429) return 'rate_limit';

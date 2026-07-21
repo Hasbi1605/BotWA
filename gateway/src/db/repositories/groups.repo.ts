@@ -1,6 +1,8 @@
 import { getDb } from '../index.js';
 
 export type SummaryMode = 'normal' | 'roast';
+/** silent = store only; lc = Loss Control — reply to all group chat */
+export type ReplyMode = 'silent' | 'lc';
 
 export interface Group {
   id: number;
@@ -11,6 +13,7 @@ export interface Group {
   summary_cron_morning: string;
   summary_cron_evening: string;
   summary_mode: SummaryMode;
+  reply_mode: ReplyMode;
   activated_at: string | null;
   created_at: string;
   updated_at: string;
@@ -55,5 +58,12 @@ export function setSummaryMode(id: number, mode: SummaryMode): void {
   const db = getDb('');
   db.prepare(
     'UPDATE groups SET summary_mode = ?, updated_at = datetime(\'now\') WHERE id = ?'
+  ).run(mode, id);
+}
+
+export function setReplyMode(id: number, mode: ReplyMode): void {
+  const db = getDb('');
+  db.prepare(
+    'UPDATE groups SET reply_mode = ?, updated_at = datetime(\'now\') WHERE id = ?'
   ).run(mode, id);
 }

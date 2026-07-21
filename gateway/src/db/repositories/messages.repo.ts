@@ -55,6 +55,25 @@ export function findById(id: number): Message | undefined {
   return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message | undefined;
 }
 
+/** Recent messages for LC chat context (newest last). */
+export function findRecentByGroup(
+  groupId: number,
+  limit = 20
+): Array<Message & { display_name?: string }> {
+  const db = getDb('');
+  const rows = db
+    .prepare(
+      `SELECT m.*, p.display_name
+       FROM messages m
+       JOIN participants p ON p.id = m.participant_id
+       WHERE m.group_id = ? AND m.deleted_at IS NULL
+       ORDER BY m.timestamp DESC
+       LIMIT ?`
+    )
+    .all(groupId, limit) as Array<Message & { display_name?: string }>;
+  return rows.reverse();
+}
+
 export function markDeleted(groupId: number, messageId: string): void {
   const db = getDb('');
   db.prepare(

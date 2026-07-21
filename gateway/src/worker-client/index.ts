@@ -75,6 +75,24 @@ export async function callWorkerScheduleDetect(req: ScheduleDetectRequest, confi
   return callWorker('/api/v1/schedule/detect', req, config, 30_000);
 }
 
+interface ChatLcRequest {
+  group_id: number;
+  group_name: string;
+  sender_name: string;
+  message: string;
+  recent: Array<{ sender_name: string; content: string }>;
+}
+
+interface ChatLcResponse {
+  status: string;
+  reply?: string;
+  error?: string;
+}
+
+export async function callWorkerChatLc(req: ChatLcRequest, config: any): Promise<ChatLcResponse> {
+  return callWorker('/api/v1/chat/lc', req, config, 45_000);
+}
+
 async function callWorker<T>(path: string, body: any, config: any, timeoutMs: number): Promise<T> {
   const url = `${config.workerUrl}${path}`;
   const requestId = crypto.randomUUID();

@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     )
     # Schedule detection is lighter — start from mini to save quota
     schedule_models: str = "openai/gpt-4.1-mini,openai/gpt-4.1-nano"
+    # LC chat replies — prefer mini for speed/cost; cascade if needed
+    chat_models: str = (
+        "openai/gpt-4.1-mini,"
+        "openai/gpt-4.1-nano,"
+        "openai/gpt-4o,"
+        "openai/gpt-4.1"
+    )
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -38,6 +45,7 @@ class Settings(BaseSettings):
             "summary": self.summary_models,
             "pdf": self.pdf_models,
             "schedule": self.schedule_models,
+            "chat": self.chat_models,
         }.get(lane, "")
         return [m.strip() for m in raw.split(",") if m.strip()]
 

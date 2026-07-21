@@ -13,6 +13,8 @@ export type IntentName =
   | 'mode'
   | 'mode_normal'
   | 'mode_roast'
+  | 'lc_on'
+  | 'lc_off'
   | 'pause'
   | 'resume'
   | 'delete_data'
@@ -60,7 +62,9 @@ export function looksLikeCommand(text: string): boolean {
     /^(admin|menu admin|bantuan admin)$/,
     /^(status|cek status)$/,
     /^(ringkas|rangkum|ringkas sekarang|rangkum sekarang|summary)(\s+sekarang)?$/,
-    /^(mode)(\s+(normal|roast))?$/,
+    /^(mode)(\s+(normal|roast|lc|silent|diam))?$/,
+    /^(lc)(\s+(on|off|nyala|mati|aktif|hidup|stop))?$/,
+    /^(loss\s*control|los\s*control)(\s+(on|off|nyala|mati))?$/,
     /^(jeda|pause|istirahat)$/,
     /^(lanjut(kan)?|resume|hidupkan)$/,
     /^(hapus\s*data|hapusdata)$/,
@@ -99,6 +103,8 @@ export function parseIntent(text: string): ParsedIntent {
         return { name: 'summary', args, raw };
       case 'mode':
         return parseModeArgs(args, raw);
+      case 'lc':
+        return parseLcArgs(args, raw);
       case 'pause':
       case 'jeda':
         return { name: 'pause', args, raw };
@@ -148,6 +154,11 @@ export function parseIntent(text: string): ParsedIntent {
     const args = rest ? rest.split(/\s+/) : [];
     return parseModeArgs(args, raw);
   }
+  if (/^(lc|loss\s*control|los\s*control)\b/.test(t)) {
+    const rest = t.replace(/^(lc|loss\s*control|los\s*control)\s*/, '');
+    const args = rest ? rest.split(/\s+/) : [];
+    return parseLcArgs(args, raw);
+  }
   if (/^(jeda|pause|istirahat)$/.test(t)) {
     return { name: 'pause', args: [], raw };
   }
@@ -182,7 +193,21 @@ function parseModeArgs(args: string[], raw: string): ParsedIntent {
   if (sub === 'roast' || sub === 'roasting' || sub === 'santai') {
     return { name: 'mode_roast', args, raw };
   }
+  if (sub === 'lc' || sub === 'los' || sub === 'loss') {
+    return { name: 'lc_on', args, raw };
+  }
+  if (sub === 'silent' || sub === 'diam' || sub === 'senyap') {
+    return { name: 'lc_off', args, raw };
+  }
   return { name: 'mode', args, raw };
+}
+
+function parseLcArgs(args: string[], raw: string): ParsedIntent {
+  const sub = (args[0] || 'on').toLowerCase();
+  if (['off', 'mati', 'stop', 'silent', 'diam', 'nonaktif'].includes(sub)) {
+    return { name: 'lc_off', args, raw };
+  }
+  return { name: 'lc_on', args, raw };
 }
 
 function parseScheduleArgs(args: string[], raw: string): ParsedIntent {

@@ -67,7 +67,7 @@ class ProviderCascade:
         token_pairs = [(alias, tok) for alias, tok in token_pairs if tok]
 
         built: dict[str, list[ProviderRoute]] = {}
-        for lane in ("summary", "pdf", "schedule"):
+        for lane in ("summary", "pdf", "schedule", "chat"):
             models = settings.model_list(lane)
             lane_routes: list[ProviderRoute] = []
             for model_id in models:

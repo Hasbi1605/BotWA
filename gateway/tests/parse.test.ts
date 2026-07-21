@@ -24,6 +24,12 @@ describe('command parser (natural Indonesian)', () => {
     expect(parseIntent('mode normal').name).toBe('mode_normal');
     expect(parseIntent('mode roast').name).toBe('mode_roast');
     expect(parseIntent('.mode roast').name).toBe('mode_roast');
+    expect(parseIntent('lc on').name).toBe('lc_on');
+    expect(parseIntent('lc off').name).toBe('lc_off');
+    expect(parseIntent('lc nyala').name).toBe('lc_on');
+    expect(parseIntent('lc mati').name).toBe('lc_off');
+    expect(parseIntent('mode lc').name).toBe('lc_on');
+    expect(parseIntent('mode silent').name).toBe('lc_off');
   });
 
   it('does not treat normal chat as commands', () => {

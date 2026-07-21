@@ -34,16 +34,17 @@ export { looksLikeCommand };
 const HELP_ADMIN = `🛠️ *Menu admin*
 
 Bot kerja *otomatis* (ringkasan, PDF/Word, pengingat jadwal).
-Anggota tidak perlu perintah.
+Anggota biasanya *tidak* perlu perintah.
 
 • *aktifkan bot* → *YA* — nyalakan (+ privasi)
-• *mode normal* / *mode roast* — gaya ringkasan
+• *mode normal* / *mode roast* — gaya *ringkasan* 2× sehari
+• *lc on* / *lc off* — *Loss Control*: bot balas *semua* chat (lucu/roast, semua anggota)
 • *ringkas* — ringkasan sekarang (opsional)
 • *jadwal* — lihat / *jadwal batal 1*
 • *jeda* / *lanjut* / *status*
-• *hapus data* → *YA* — hapus data grup
+• *hapus data* → *YA*
 
-Bot *tidak perlu* jadi admin grup — cukup admin grup yang memberi perintah.`;
+_Mode ringkasan_ (normal/roast) *terpisah* dari _LC_ (balas chat).`;
 
 export async function handleCommand(ctx: CommandContext): Promise<void> {
   const { sock } = ctx;
@@ -117,6 +118,12 @@ export async function handleCommand(ctx: CommandContext): Promise<void> {
     case 'mode_roast':
       await handleMode(ctx, intent.name);
       break;
+    case 'lc_on':
+      await handleLc(ctx, true);
+      break;
+    case 'lc_off':
+      await handleLc(ctx, false);
+      break;
     case 'pause':
       await handlePause(sock, groupJid, ctx.group);
       break;
@@ -174,10 +181,12 @@ async function handleMode(
 ): Promise<void> {
   if (intent === 'mode') {
     const mode = ctx.group.summary_mode || 'normal';
+    const reply = ctx.group.reply_mode || 'silent';
     await sendMessage(
       ctx.sock,
       ctx.group.jid,
-      `Mode ringkasan saat ini: *${mode}*\nUbah: *mode normal* atau *mode roast*`
+      `📋 *Ringkasan:* ${mode} → *mode normal* / *mode roast*\n` +
+        `💬 *Balas chat (LC):* ${reply === 'lc' ? 'ON 🔥' : 'OFF (silent)'} → *lc on* / *lc off*`
     );
     return;
   }
@@ -188,7 +197,33 @@ async function handleMode(
     next === 'roast'
       ? '🔥 *roast* — ringkasan santai/sarkas ringan (tetap ramah)'
       : '✅ *normal* — ringkasan sopan & padat';
-  await sendMessage(ctx.sock, ctx.group.jid, `Mode ringkasan diganti ke ${label}`);
+  await sendMessage(
+    ctx.sock,
+    ctx.group.jid,
+    `Mode *ringkasan* diganti ke ${label}\n_(LC/balas chat tidak berubah — pakai *lc on* / *lc off*)_`
+  );
+}
+
+async function handleLc(ctx: CommandContext, on: boolean): Promise<void> {
+  const next = on ? 'lc' : 'silent';
+  groupsRepo.setReplyMode(ctx.group.id, next);
+  ctx.group.reply_mode = next;
+  if (on) {
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      `🔥 *Loss Control (LC) ON*\n\n` +
+        `Bot akan *membalas chat grup* (bukan cuma admin/command) — gaya helpful, lucu, sedikit roasting.\n` +
+        `Tidak perlu tag bot.\n\n` +
+        `_Rate-limit aktif biar tidak banjir._ Matikan: *lc off*`
+    );
+  } else {
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      `🤫 *LC OFF* — bot kembali diam di chat biasa.\nRingkasan otomatis & PDF tetap jalan.\nNyalakan lagi: *lc on*`
+    );
+  }
 }
 
 async function handlePendingReply(
@@ -272,6 +307,7 @@ async function handleStatus(ctx: CommandContext): Promise<void> {
         : 'Belum aktif';
 
   const mode = ctx.group.summary_mode || 'normal';
+  const reply = ctx.group.reply_mode || 'silent';
   await sendMessage(
     ctx.sock,
     ctx.group.jid,
@@ -280,6 +316,7 @@ async function handleStatus(ctx: CommandContext): Promise<void> {
 WhatsApp: ${isConnected() ? 'Terhubung ✅' : 'Terputus ⚠️'}
 Grup: ${statusLabel}
 Mode ringkasan: ${mode}
+LC (balas chat): ${reply === 'lc' ? 'ON 🔥' : 'OFF'}
 Pesan 24 jam: ${messageCount}
 Ringkasan terakhir: ${lastSummary?.completed_at ? new Date(lastSummary.completed_at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }) : 'Belum ada'}
 Waktu: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`

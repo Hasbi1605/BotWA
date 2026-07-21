@@ -290,4 +290,47 @@ const migrations = [
         CHECK (summary_mode IN ('normal', 'roast'));
     `,
   },
+  {
+    name: '014_groups_reply_mode',
+    sql: `
+      ALTER TABLE groups ADD COLUMN reply_mode TEXT NOT NULL DEFAULT 'silent'
+        CHECK (reply_mode IN ('silent', 'lc'));
+    `,
+  },
+  {
+    name: '015_jobs_chat_reply_type',
+    sql: `
+      CREATE TABLE jobs_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL
+          CHECK (type IN ('summary', 'pdf_extract', 'pdf_analyze', 'schedule_detect', 'reminder', 'retention', 'chat_reply')),
+        payload_ref TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'running', 'completed', 'failed', 'retrying', 'failed_final')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        run_after TEXT,
+        idempotency_key TEXT NOT NULL,
+        error_class TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
+      INSERT INTO jobs_new (
+        id, type, payload_ref, status, attempts, max_attempts, run_after,
+        idempotency_key, error_class, error_message, created_at, updated_at, completed_at
+      )
+      SELECT
+        id, type, payload_ref, status, attempts, max_attempts, run_after,
+        idempotency_key, error_class, error_message, created_at, updated_at, completed_at
+      FROM jobs;
+      DROP TABLE jobs;
+      ALTER TABLE jobs_new RENAME TO jobs;
+      CREATE UNIQUE INDEX idx_jobs_idempotency ON jobs(idempotency_key);
+      CREATE INDEX idx_jobs_status ON jobs(status);
+      CREATE INDEX idx_jobs_type ON jobs(type);
+      CREATE INDEX idx_jobs_run_after ON jobs(run_after);
+    `,
+  },
 ];
