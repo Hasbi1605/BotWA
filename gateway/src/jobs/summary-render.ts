@@ -68,26 +68,26 @@ export function renderSummary(input: RenderSummaryInput): string {
   });
   sections.push(
     roast
-      ? `*Ringkasan roast — ${startDate} s/d ${endDate}* 🔥`
-      : `*Ringkasan grup — ${startDate} s/d ${endDate}*`
+      ? `🔥 *Ringkasan roast*\n_${startDate} s/d ${endDate}_`
+      : `📋 *Ringkasan grup*\n_${startDate} s/d ${endDate}_`
   );
 
   if (output?.activity) {
     const msgCount = output.activity.message_count ?? 0;
     const people = output.activity.participant_count ?? 0;
-    sections.push(`${msgCount} pesan · ${people} orang aktif`);
+    sections.push(`_${msgCount} pesan · ${people} orang aktif_`);
   }
 
   if (output?.narrative) {
     sections.push(
       roast
-        ? `*Inti (versi santai)*\n${R(output.narrative)}`
-        : `*Inti diskusi*\n${R(output.narrative)}`
+        ? `💬 *Inti (santai)*\n${R(output.narrative)}`
+        : `💬 *Inti diskusi*\n${R(output.narrative)}`
     );
   }
 
   if (output?.highlights?.length > 0) {
-    const lines = [roast ? '*Yang rame*' : '*Sorotan*'];
+    const lines = [roast ? '✨ *Yang rame*' : '✨ *Sorotan*'];
     for (const h of output.highlights.slice(0, 8)) {
       lines.push(`• ${R(h.text)}`);
     }
@@ -95,22 +95,22 @@ export function renderSummary(input: RenderSummaryInput): string {
   }
 
   if (output?.important_messages?.length > 0) {
-    const lines = ['*Pesan penting*'];
+    const lines = ['📌 *Pesan penting*'];
     for (const m of output.important_messages.slice(0, 6)) {
       const who = nameOf(m.speaker_alias, rev);
-      lines.push(`• ${who}: "${R(m.quote)}"`);
+      lines.push(`• *${who}:* _"${R(m.quote)}"_`);
     }
     sections.push(lines.join('\n'));
   }
 
   if (output?.decisions?.length > 0) {
-    const lines = ['*Keputusan*'];
+    const lines = ['✅ *Keputusan*'];
     for (const d of output.decisions) {
       const status =
         d.status === 'tentative'
-          ? ' (sementara)'
+          ? ' _(sementara)_'
           : d.status === 'disputed'
-            ? ' (belum sepakat)'
+            ? ' _(belum sepakat)_'
             : '';
       lines.push(`• ${R(d.text)}${status}`);
     }
@@ -118,24 +118,24 @@ export function renderSummary(input: RenderSummaryInput): string {
   }
 
   if (output?.tasks?.length > 0) {
-    const lines = ['*Tugas / PR*'];
+    const lines = ['☑️ *Tugas / PR*'];
     for (const t of output.tasks) {
       let taskText = `• ${R(t.text)}`;
-      if (t.assignee_alias) taskText += ` — ${nameOf(t.assignee_alias, rev)}`;
+      if (t.assignee_alias) taskText += ` — _${nameOf(t.assignee_alias, rev)}_`;
       lines.push(taskText);
     }
     sections.push(lines.join('\n'));
   }
 
   if (output?.schedule_candidates?.length > 0) {
-    const lines = ['*Jadwal terdeteksi* (otomatis + pengingat)'];
+    const lines = ['🗓️ *Jadwal* _(otomatis + pengingat)_'];
     for (const s of output.schedule_candidates) {
-      let schedText = `• ${R(s.title)}`;
-      if (s.date) schedText += ` — ${s.date}`;
+      let schedText = `• *${R(s.title)}*`;
+      if (s.date) schedText += `\n  ${s.date}`;
       if (s.time) schedText += ` ${s.time}`;
-      else if (s.date) schedText += ' 09:00 (default)';
-      if (s.location) schedText += ` @ ${R(s.location)}`;
-      if (s.ambiguities?.length > 0) schedText += ' ⚠️ belum pasti';
+      else if (s.date) schedText += ' 09:00 _(default)_';
+      if (s.location) schedText += ` · ${R(s.location)}`;
+      if (s.ambiguities?.length > 0) schedText += ' ⚠️';
       lines.push(schedText);
     }
     sections.push(lines.join('\n'));
@@ -146,7 +146,7 @@ export function renderSummary(input: RenderSummaryInput): string {
     : [];
   const allDocs = [...docsFromModel.map(R), ...documentLines];
   if (allDocs.length > 0) {
-    const lines = ['*Dokumen*'];
+    const lines = ['📄 *Dokumen*'];
     for (const doc of allDocs.slice(0, 6)) {
       lines.push(`• ${doc}`);
     }
@@ -154,30 +154,28 @@ export function renderSummary(input: RenderSummaryInput): string {
   }
 
   if (output?.open_questions?.length > 0) {
-    const lines = ['*Pertanyaan terbuka*'];
+    const lines = ['❓ *Pertanyaan terbuka*'];
     for (const q of output.open_questions) {
       lines.push(`• ${R(typeof q === 'string' ? q : String(q))}`);
     }
     sections.push(lines.join('\n'));
   }
 
-  // Links — deterministic (community-style "Link" section)
   if (output?.links?.length > 0) {
-    const lines = ['*Link*'];
+    const lines = ['🔗 *Link*'];
     for (const link of output.links.slice(0, 10)) {
       const who = nameOf(link.sender_alias, rev);
-      lines.push(who ? `• ${who}: ${link.url}` : `• ${link.url}`);
+      lines.push(who ? `• *${who}:* ${link.url}` : `• ${link.url}`);
     }
     sections.push(lines.join('\n'));
   }
 
-  // Top senders footer
   if (output?.top_senders?.length > 0) {
     const parts = output.top_senders.slice(0, 5).map((s: any) => {
       const who = nameOf(s.alias, rev);
-      return `${who} (${s.count})`;
+      return `*${who}* (${s.count})`;
     });
-    sections.push(`Top pengirim: ${parts.join(', ')}`);
+    sections.push(`👥 Top pengirim: ${parts.join(' · ')}`);
   }
 
   return sections.filter(Boolean).join('\n\n').trim();

@@ -74,18 +74,20 @@ describe('summary render (community-style)', () => {
       documentLines: ['Proposal.pdf: ringkasan singkat'],
     });
 
-    expect(text).toContain('*Inti diskusi*');
+    expect(text).toContain('💬 *Inti diskusi*');
     expect(text).toContain('Ayu mengusulkan rapat, Budi setuju.');
-    expect(text).toContain('Ayu: "Rapat jam 3 sore"');
-    expect(text).toContain('*Keputusan*');
-    expect(text).toContain('Bawa proyektor — Budi');
-    expect(text).toContain('*Jadwal terdeteksi*');
-    expect(text).toContain('*Dokumen*');
+    expect(text).toContain('*Ayu:*');
+    expect(text).toContain('✅ *Keputusan*');
+    expect(text).toContain('Bawa proyektor — _Budi_');
+    expect(text).toContain('🗓️ *Jadwal*');
+    expect(text).toContain('📄 *Dokumen*');
     expect(text).toContain('Proposal.pdf');
-    expect(text).toContain('*Pertanyaan terbuka*');
-    expect(text).toContain('*Link*');
-    expect(text).toContain('Budi: https://example.com/rapat');
-    expect(text).toContain('Top pengirim: Ayu (8), Budi (4)');
+    expect(text).toContain('❓ *Pertanyaan terbuka*');
+    expect(text).toContain('🔗 *Link*');
+    expect(text).toContain('*Budi:*');
+    expect(text).toContain('https://example.com/rapat');
+    expect(text).toContain('Top pengirim:');
+    expect(text).toContain('*Ayu* (8)');
     expect(text).not.toContain('PERSON_001');
   });
 
@@ -103,7 +105,7 @@ describe('summary render (community-style)', () => {
       startAt: '2026-07-21T01:00:00.000Z',
       endAt: '2026-07-21T13:00:00.000Z',
     });
-    expect(text).toContain('*Inti diskusi*');
+    expect(text).toContain('💬 *Inti diskusi*');
     expect(text).not.toContain('*Keputusan*');
     expect(text).not.toContain('*Link*');
     expect(text).not.toContain('Top pengirim');

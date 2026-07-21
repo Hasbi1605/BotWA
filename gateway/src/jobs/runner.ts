@@ -9,6 +9,7 @@ import { sendMessage } from '../whatsapp/outbound.js';
 import { getSocket } from '../whatsapp/connection.js';
 import * as groupsRepo from '../db/repositories/groups.repo.js';
 import { renderSummary } from './summary-render.js';
+import { renderDocumentSummary } from './document-render.js';
 import { ingestCandidatesAndAutoActivate } from './schedule-auto.js';
 
 const logger = pino({ name: 'job-runner' });
@@ -273,32 +274,8 @@ async function postDocumentSummaryToGroup(
 ): Promise<void> {
   const sock = getSocket();
   if (!sock) return;
-
-  const lines: string[] = ['📄 *Ringkasan dokumen*', `File: ${filename}`];
-  if (analysis?.title) lines.push(`Judul: ${analysis.title}`);
-  if (analysis?.purpose) lines.push(String(analysis.purpose));
-  const points: string[] = Array.isArray(analysis?.key_points) ? analysis.key_points : [];
-  for (const p of points.slice(0, 6)) {
-    lines.push(`• ${p}`);
-  }
-  if (Array.isArray(analysis?.decisions) && analysis.decisions.length) {
-    lines.push('*Keputusan di dokumen*');
-    for (const d of analysis.decisions.slice(0, 4)) {
-      lines.push(`• ${typeof d === 'string' ? d : d?.text || d}`);
-    }
-  }
-  if (Array.isArray(analysis?.tasks) && analysis.tasks.length) {
-    lines.push('*Tugas*');
-    for (const t of analysis.tasks.slice(0, 4)) {
-      const text = typeof t === 'string' ? t : t?.text || JSON.stringify(t);
-      lines.push(`• ${text}`);
-    }
-  }
-  if (analysis?.redacted) {
-    lines.push('_Data sensitif disamarkan otomatis._');
-  }
-
-  await sendMessage(sock, groupJid, lines.join('\n'));
+  const text = renderDocumentSummary(filename, analysis);
+  if (text) await sendMessage(sock, groupJid, text);
 }
 
 async function processScheduleJob(job: jobsRepo.Job, config: Config): Promise<void> {

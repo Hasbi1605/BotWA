@@ -60,8 +60,9 @@ function splitAtSectionBoundaries(text: string): string[] {
 
   for (const line of lines) {
     // Section boundaries: emoji headers, double newlines, or numbered sections
-    if (line.match(/^[🔴🟠🟡🟢🔵📌📋📅📄❓⏰📊📝🔗\*]/u) ||
-        line.match(/^\*(Inti diskusi|Sorotan|Pesan penting|Keputusan|Tugas|Usulan jadwal|Dokumen|Pertanyaan|Link)/i) ||
+    if (line.match(/^[🔴🟠🟡🟢🔵📌📋📅📄❓⏰📊📝🔗✨✅☑️🗓️💬👥🔥📁]/u) ||
+        line.match(/^[📄📋🔥✨✅☑️🗓️❓🔗💬📌👥]/u) ||
+        line.match(/\*(Ringkasan|Inti|Sorotan|Pesan penting|Keputusan|Tugas|Jadwal|Dokumen|Pertanyaan|Link|Poin utama|Tenggat)/i) ||
         line.match(/^\d+\.\s/) ||
         line === '') {
       if (current.trim()) {
