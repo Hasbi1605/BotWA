@@ -1,12 +1,9 @@
 from fastapi import APIRouter, Depends, Header
-from pydantic import BaseModel
-from typing import Optional
 import structlog
 
 from app.auth import verify_token
 from app.services.summary_service import SummaryService
 from app.schemas.requests import SummaryRequest
-from app.schemas.summary_output import SummaryOutput
 
 router = APIRouter()
 logger = structlog.get_logger()

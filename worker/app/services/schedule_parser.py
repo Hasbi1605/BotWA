@@ -161,7 +161,11 @@ class ScheduleParser:
     def _extract_time(self, content: str) -> dict:
         """Extract time from content."""
         # Explicit time patterns
-        time_match = re.search(r"(\d{1,2})[:.]?(\d{2})\s*(wib|pagi|siang|sore|malam)?", content, re.IGNORECASE)
+        time_match = re.search(
+            r"\b(\d{1,2})[:.](\d{2})\s*(wib|pagi|siang|sore|malam)?\b",
+            content,
+            re.IGNORECASE,
+        )
         if time_match:
             hour = int(time_match.group(1))
             minute = int(time_match.group(2))
@@ -267,7 +271,6 @@ Balikkan HANYA JSON."""
                 return data.get("candidates", [])
             except Exception as e:
                 logger.warning("Schedule AI route failed", route=route.id, error=str(e))
-                cascade.record_error(route, e)
                 continue
 
         return []

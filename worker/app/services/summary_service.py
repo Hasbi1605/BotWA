@@ -1,6 +1,5 @@
 from __future__ import annotations
 import structlog
-from typing import Any
 
 from app.schemas.requests import SummaryRequest
 from app.schemas.summary_output import SummaryOutput

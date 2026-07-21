@@ -1,4 +1,4 @@
-import type { WASocket, proto } from '@whiskeysockets/baileys';
+import type { WASocket } from '@whiskeysockets/baileys';
 import type { Group } from '../db/repositories/groups.repo.js';
 import type { Participant } from '../db/repositories/participants.repo.js';
 import type { NormalizedMessage } from '../whatsapp/normalizer.js';
@@ -8,9 +8,6 @@ import { checkRateLimit, formatRetryAfter } from '../auth/rate-limiter.js';
 import { handleActivation, handlePause, handleResume, handleDeleteData } from '../auth/consent.js';
 import { sendMessage } from '../whatsapp/outbound.js';
 import * as auditRepo from '../db/repositories/audit.repo.js';
-import pino from 'pino';
-
-const logger = pino({ name: 'command-router' });
 
 interface CommandContext {
   group: Group;
@@ -22,7 +19,6 @@ interface CommandContext {
 
 export async function handleCommand(
   sock: WASocket,
-  msg: proto.IWebMessageInfo,
   ctx: CommandContext
 ): Promise<void> {
   const groupJid = ctx.group.jid;
@@ -244,8 +240,17 @@ async function handleSchedule(sock: WASocket, groupJid: string, ctx: CommandCont
       return;
     }
 
-    const [day, month, year] = dateMatch.split('-');
-    const startsAt = `${year}-${month}-${day}T${timeMatch || '00:00'}:00`;
+    const { DateTime } = await import('luxon');
+    const localStartsAt = DateTime.fromFormat(
+      `${dateMatch} ${timeMatch || '00:00'}`,
+      'dd-MM-yyyy HH:mm',
+      { zone: 'Asia/Jakarta' },
+    );
+    if (!localStartsAt.isValid) {
+      await sendMessage(sock, groupJid, 'Tanggal atau waktu tidak valid.');
+      return;
+    }
+    const startsAt = localStartsAt.toUTC().toISO()!;
 
     const schedule = schedulesRepo.createSchedule({
       group_id: ctx.group.id,

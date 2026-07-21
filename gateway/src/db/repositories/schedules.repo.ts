@@ -1,4 +1,5 @@
 import { getDb } from '../index.js';
+import { DateTime } from 'luxon';
 
 export interface ScheduleCandidate {
   id: number;
@@ -62,7 +63,11 @@ export function confirmCandidate(candidateId: number, corrections?: Partial<Sche
     const date = corrections?.date ?? candidate.date;
     const time = corrections?.time ?? candidate.time;
     const location = corrections?.location ?? candidate.location;
-    const startsAt = date && time ? `${date}T${time}:00` : date ? `${date}T00:00:00` : new Date().toISOString();
+    const localStartsAt = date
+      ? DateTime.fromISO(`${date}T${time ?? '00:00'}:00`, { zone: 'Asia/Jakarta' })
+      : DateTime.now().setZone('Asia/Jakarta');
+    if (!localStartsAt.isValid) throw new Error('Candidate date or time is invalid');
+    const startsAt = localStartsAt.toUTC().toISO()!;
 
     const schedule = db.prepare(
       `INSERT INTO schedules (group_id, title, starts_at, location, source_candidate_id)

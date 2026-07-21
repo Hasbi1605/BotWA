@@ -1,13 +1,10 @@
 from __future__ import annotations
 import os
 import structlog
-from typing import Any
 
 import pdfplumber
-from PIL import Image
 import pytesseract
 
-from app.config import get_settings
 from app.services.sensitivity import SensitivityScanner
 
 logger = structlog.get_logger()
@@ -19,7 +16,6 @@ class PdfService:
 
     async def analyze(self, request) -> dict:
         """Extract text from PDF, check sensitivity, and analyze content."""
-        settings = get_settings()
         file_path = request.file_path
 
         if not os.path.exists(file_path):
@@ -137,7 +133,6 @@ Balikkan HANYA JSON, tanpa markdown code block."""
                 return json.loads(result.content)
             except Exception as e:
                 logger.warning("PDF route failed", route=route.id, error=str(e))
-                cascade.record_error(route, e)
                 continue
 
         return {"error": "All provider routes failed for PDF analysis"}

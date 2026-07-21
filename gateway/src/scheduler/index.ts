@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import type { ScheduledTask } from 'node-cron';
 import { DateTime } from 'luxon';
 import type { Config } from '../config/index.js';
 import * as groupsRepo from '../db/repositories/groups.repo.js';
@@ -8,9 +9,9 @@ import pino from 'pino';
 
 const logger = pino({ name: 'scheduler' });
 
-let morningTask: cron.ScheduledTask | null = null;
-let eveningTask: cron.ScheduledTask | null = null;
-let reminderTask: cron.ScheduledTask | null = null;
+let morningTask: ScheduledTask | null = null;
+let eveningTask: ScheduledTask | null = null;
+let reminderTask: ScheduledTask | null = null;
 
 export function startScheduler(config: Config): void {
   const tz = config.summaryTimezone;

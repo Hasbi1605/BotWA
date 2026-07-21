@@ -262,7 +262,7 @@ async function processScheduleJob(job: jobsRepo.Job, config: Config): Promise<vo
   }
 }
 
-async function processReminderJob(job: jobsRepo.Job, config: Config): Promise<void> {
+async function processReminderJob(_job: jobsRepo.Job, _config: Config): Promise<void> {
   const remindersRepo = await import('../db/repositories/reminders.repo.js');
   const pendingReminders = remindersRepo.getPendingDue();
 

@@ -18,7 +18,7 @@ WhatsApp Group → Gateway (Node.js/TypeScript + Baileys)
                     ↓
                 Worker (Python/FastAPI + GitHub Models)
                     ↓
-                SQLite (encrypted)
+                SQLite (gateway-owned, WAL)
 ```
 
 ## Quick Start
@@ -89,11 +89,18 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 # Gateway tests
 cd gateway
+npm ci
 npm test
+npm run lint
+npm run build
 
 # Worker tests
 cd worker
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 pytest
+ruff check app tests
 ```
 
 ## Deployment

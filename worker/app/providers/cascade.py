@@ -1,10 +1,7 @@
 from __future__ import annotations
-import os
-import json
-import time
 import structlog
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
 from openai import AsyncOpenAI
@@ -121,7 +118,7 @@ class ProviderCascade:
         """Get available routes for a lane, skipping those in cooldown."""
         routes = self.routes.get(lane, [])
         available = []
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         for route in routes:
             cb = self.circuit_breakers.get(route.id, CircuitBreakerState())
@@ -192,20 +189,20 @@ class ProviderCascade:
             # 429: cooldown 30 minutes
             retry_after = getattr(error, "retry_after", None)
             if retry_after:
-                cb.cooldown_until = datetime.utcnow() + timedelta(seconds=retry_after)
+                cb.cooldown_until = datetime.now(UTC) + timedelta(seconds=retry_after)
             else:
-                cb.cooldown_until = datetime.utcnow() + timedelta(minutes=30)
+                cb.cooldown_until = datetime.now(UTC) + timedelta(minutes=30)
             cb.state = "cooldown"
         elif error_class == "auth":
             # 401/403: disabled until manual fix
             cb.state = "disabled"
         elif error_class in ("server_error", "timeout"):
             # 5xx/timeout: cooldown 5 minutes
-            cb.cooldown_until = datetime.utcnow() + timedelta(minutes=5)
+            cb.cooldown_until = datetime.now(UTC) + timedelta(minutes=5)
             cb.state = "cooldown"
         else:
             # Other errors: cooldown 5 minutes
-            cb.cooldown_until = datetime.utcnow() + timedelta(minutes=5)
+            cb.cooldown_until = datetime.now(UTC) + timedelta(minutes=5)
             cb.state = "cooldown"
 
         self.circuit_breakers[route.id] = cb

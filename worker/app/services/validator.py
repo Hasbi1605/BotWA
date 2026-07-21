@@ -1,6 +1,5 @@
 from __future__ import annotations
 import structlog
-from typing import Any
 from dataclasses import dataclass
 
 from app.schemas.summary_output import SummaryOutput
@@ -48,12 +47,16 @@ class SummaryValidator:
 
         # Check decisions
         for decision in output.decisions:
+            if not decision.source_message_ids:
+                errors.append("Decision has no source messages")
             for msg_id in decision.source_message_ids:
                 if msg_id not in message_map:
                     errors.append(f"Decision references unknown message: {msg_id}")
 
         # Check tasks
         for task in output.tasks:
+            if not task.source_message_ids:
+                errors.append("Task has no source messages")
             for msg_id in task.source_message_ids:
                 if msg_id not in message_map:
                     errors.append(f"Task references unknown message: {msg_id}")
@@ -72,18 +75,21 @@ class SummaryValidator:
 
         # Check schedule candidates
         for candidate in output.schedule_candidates:
+            if not candidate.source_message_ids:
+                errors.append("Schedule candidate has no source messages")
             for msg_id in candidate.source_message_ids:
                 if msg_id not in message_map:
                     errors.append(f"Schedule candidate references unknown message: {msg_id}")
 
         # Check highlights
         for highlight in output.highlights:
+            if not highlight.source_message_ids:
+                errors.append("Highlight has no source messages")
             for msg_id in highlight.source_message_ids:
                 if msg_id not in message_map:
                     errors.append(f"Highlight references unknown message: {msg_id}")
 
-        # Critical errors prevent publishing
-        critical_errors = [e for e in errors if "Unknown message ID" in e or "Quote not found" in e]
-        can_publish = len(critical_errors) == 0
+        # Strict evidence policy: any validation error prevents publishing.
+        can_publish = len(errors) == 0
 
         return ValidationResult(errors=errors, can_publish=can_publish)

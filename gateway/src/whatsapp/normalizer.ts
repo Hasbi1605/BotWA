@@ -1,4 +1,4 @@
-import type { proto } from '@whiskeysockets/baileys';
+import type { WAMessage } from '@whiskeysockets/baileys';
 
 export interface NormalizedMessage {
   messageId: string;
@@ -15,7 +15,7 @@ export interface NormalizedMessage {
   };
 }
 
-export function normalizeMessage(msg: proto.IWebMessageInfo): NormalizedMessage {
+export function normalizeMessage(msg: WAMessage): NormalizedMessage {
   const message = msg.message;
   const messageId = msg.key.id || '';
   const timestamp = new Date(

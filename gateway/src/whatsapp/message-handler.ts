@@ -1,4 +1,4 @@
-import type { WASocket, proto } from '@whiskeysockets/baileys';
+import type { WAMessage, WASocket } from '@whiskeysockets/baileys';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import type { Config } from '../config/index.js';
 import { isAllowlisted } from '../config/allowlist.js';
@@ -19,7 +19,7 @@ const logger = pino({ name: 'message-handler' });
 
 export async function handleMessage(
   sock: WASocket,
-  msg: proto.IWebMessageInfo,
+  msg: WAMessage,
   config: Config
 ): Promise<void> {
   // Ignore bot's own messages
@@ -81,7 +81,7 @@ export async function handleMessage(
 
   // Check for commands first
   if (normalized.content.startsWith('.')) {
-    await handleCommand(sock, msg, {
+    await handleCommand(sock, {
       group,
       participant,
       senderRole,
@@ -132,7 +132,7 @@ function isPdf(mimeType?: string, fileName?: string): boolean {
 
 async function handleIncomingPdf(
   sock: WASocket,
-  msg: proto.IWebMessageInfo,
+  msg: WAMessage,
   opts: {
     groupId: number;
     messageDbId: number;

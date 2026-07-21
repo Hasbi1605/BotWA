@@ -43,7 +43,7 @@ export function getNextPending(): Job | undefined {
   return db.prepare(
     `SELECT * FROM jobs
      WHERE status IN ('pending', 'retrying')
-       AND (run_after IS NULL OR run_after <= datetime('now'))
+       AND (run_after IS NULL OR datetime(run_after) <= datetime('now'))
      ORDER BY created_at ASC
      LIMIT 1`
   ).get() as Job | undefined;

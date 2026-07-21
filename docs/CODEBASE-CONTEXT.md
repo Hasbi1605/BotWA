@@ -2,9 +2,11 @@
 
 ## Status saat ini
 
-Repository berisi implementasi RembugBot (MVP wiring) — asisten grup WhatsApp untuk KKN dan komunitas desa.
+Repository berisi release candidate RembugBot — asisten grup WhatsApp untuk KKN dan komunitas desa.
 
 Catatan post-scaffold fixes (2026-07-21): job retry (`pending`+`retrying`), PDF download+job, reminder scheduling, schedule_detect enqueue, Docker paths/network, evidence message IDs di prompt, dependency `zod`, HMAC di `.env.example`.
+
+Catatan release hardening (2026-07-21): test deterministik gateway/worker, ESLint 9 dan Ruff, ISO timestamp query untuk retry/reminder, reminder 19.00 WIB yang independen dari timezone host, evidence validation fail-closed, parser jam eksplisit, Hatch editable install, Docker build context, serta controlled upgrade Baileys 7 RC13 dengan QR listener eksplisit. Upgrade Baileys dilakukan karena legacy 6.7.16 gagal registrasi `405`; image ARM64 Node 20/Python 3.11 dan QR generation telah diverifikasi melalui smoke test tanpa pairing akun.
 
 ## Struktur
 
@@ -24,6 +26,7 @@ BotWhatsapp/
 │   │   ├── security/          # HMAC, retention cleanup
 │   │   └── health/            # Health endpoints
 │   ├── package.json
+│   ├── tests/                 # Vitest unit/integration tests
 │   ├── tsconfig.json
 │   └── Dockerfile
 ├── worker/                     # Python/FastAPI AI Worker
@@ -43,6 +46,7 @@ BotWhatsapp/
 │   │   └── schemas/           # Pydantic models
 │   ├── config/prompts/        # YAML prompts for AI
 │   ├── pyproject.toml
+│   ├── tests/                 # Pytest unit/API tests
 │   └── Dockerfile
 ├── docker/                     # Docker Compose files
 ├── scripts/                    # Backup, restore, deploy scripts
@@ -56,7 +60,7 @@ BotWhatsapp/
 ## Arsitektur
 
 ### Gateway (Node.js/TypeScript)
-- **WhatsApp Connection:** Baileys library, multi-file auth state, exponential backoff reconnect
+- **WhatsApp Connection:** Baileys 7 RC yang dipin, multi-file auth state, QR listener eksplisit, exponential backoff reconnect
 - **Message Processing:** Allowlist check, normalization, HMAC pseudonymization, SQLite persistence
 - **Admin Commands:** `.aktifkan`, `.ringkas sekarang`, `.jadwal`, `.pdf`, `.status`, `.pause`, `.resume`, `.hapusdata`
 - **Scheduler:** node-cron for 08:00 and 20:00 WIB summaries
@@ -90,6 +94,8 @@ BotWhatsapp/
 - **Evidence validation:** Setiap fakta penting harus punya source_message_id
 - **Circuit breaker:** Per-route, per-model cooldown untuk GitHub Models
 - **Safe splitting:** Ringkasan dipotong di batas section, tidak pernah di tengah kutipan
+- **Time normalization:** Jadwal disimpan UTC; input dan reminder day-before ditafsirkan eksplisit sebagai Asia/Jakarta
+- **Release gate:** Vitest/Pytest, ESLint/Ruff, dependency audit, image build ARM64, dan health smoke test wajib sebelum provisioning
 
 ## Konfigurasi
 

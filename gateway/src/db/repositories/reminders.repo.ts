@@ -1,4 +1,5 @@
 import { getDb } from '../index.js';
+import { DateTime } from 'luxon';
 
 export interface Reminder {
   id: number;
@@ -24,30 +25,31 @@ export function create(scheduleId: number, type: string, dueAt: string): Reminde
  * Skips reminder types that already exist or whose due time is already past.
  */
 export function scheduleRemindersFor(scheduleId: number, startsAtIso: string): void {
-  const startsAt = new Date(startsAtIso);
-  if (Number.isNaN(startsAt.getTime())) {
+  const startsAt = DateTime.fromISO(startsAtIso, {
+    zone: 'Asia/Jakarta',
+    setZone: true,
+  }).setZone('Asia/Jakarta');
+  if (!startsAt.isValid) {
     return;
   }
 
   const now = Date.now();
 
-  // Day before at 19:00 (relative to starts_at calendar day, using same UTC offset as startsAt)
-  const dayBefore = new Date(startsAt);
-  dayBefore.setDate(dayBefore.getDate() - 1);
-  dayBefore.setHours(19, 0, 0, 0);
+  // Day before at 19:00 WIB, independent of the container's system timezone.
+  const dayBefore = startsAt.startOf('day').minus({ days: 1 }).set({ hour: 19 });
 
   // Two hours before event
-  const twoHours = new Date(startsAt.getTime() - 2 * 60 * 60 * 1000);
+  const twoHours = startsAt.minus({ hours: 2 });
 
-  const plans: Array<{ type: 'day_before' | 'two_hours'; due: Date }> = [
+  const plans: Array<{ type: 'day_before' | 'two_hours'; due: DateTime }> = [
     { type: 'day_before', due: dayBefore },
     { type: 'two_hours', due: twoHours },
   ];
 
   for (const plan of plans) {
-    if (plan.due.getTime() <= now) continue;
+    if (plan.due.toMillis() <= now) continue;
     if (existsByScheduleAndType(scheduleId, plan.type)) continue;
-    create(scheduleId, plan.type, plan.due.toISOString());
+    create(scheduleId, plan.type, plan.due.toUTC().toISO()!);
   }
 }
 
@@ -78,7 +80,7 @@ export function getPendingDue(): Reminder[] {
     `SELECT r.*, s.title, s.starts_at, s.location, s.notes, s.group_id
      FROM reminders r
      JOIN schedules s ON s.id = r.schedule_id
-     WHERE r.status = 'pending' AND r.due_at <= datetime('now')
+     WHERE r.status = 'pending' AND datetime(r.due_at) <= datetime('now')
      ORDER BY r.due_at ASC`
   ).all() as Reminder[];
 }

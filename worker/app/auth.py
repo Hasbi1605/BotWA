@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, Header
+from fastapi import HTTPException, Header
 from app.config import get_settings
 
 

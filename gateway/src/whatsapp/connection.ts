@@ -7,6 +7,7 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import { join } from 'path';
 import pino from 'pino';
+import qrcode from 'qrcode-terminal';
 import type { Config } from '../config/index.js';
 import { handleMessage } from './message-handler.js';
 
@@ -22,7 +23,6 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
 
   sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
     logger: logger as any,
     browser: ['RembugBot', 'Chrome', '1.0.0'],
     connectTimeoutMs: 60_000,
@@ -38,6 +38,7 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
 
     if (qr) {
       logger.info('QR code received, scan with WhatsApp');
+      qrcode.generate(qr, { small: true });
     }
 
     if (connection === 'close') {
