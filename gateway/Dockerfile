@@ -1,10 +1,11 @@
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ git ca-certificates \
+    python3 make g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
-# package-lock may pin npm registry builds; github baileys needs npm install
+COPY scripts/patch-baileys-pairing.js ./scripts/patch-baileys-pairing.js
+# postinstall patches Baileys pairing Invalid buffer crash
 RUN npm install
 
 FROM deps AS build
@@ -16,10 +17,11 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ curl \
+    python3 make g++ curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi \
+COPY scripts/patch-baileys-pairing.js ./scripts/patch-baileys-pairing.js
+RUN npm install --omit=dev \
     && apt-get purge -y python3 make g++ \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*

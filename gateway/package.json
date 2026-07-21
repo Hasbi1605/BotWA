@@ -13,12 +13,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/ tests/",
-    "migrate": "tsx src/db/migrate.ts"
+    "migrate": "tsx src/db/migrate.ts",
+    "postinstall": "node scripts/patch-baileys-pairing.js"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@types/qrcode": "^1.5.6",
-    "@whiskeysockets/baileys": "github:frndchagas/Baileys#fix/ignore-empty-link-code-companion-reg",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
     "better-sqlite3": "^11.8.1",
     "fastify": "^5.3.3",
     "luxon": "^3.6.1",
