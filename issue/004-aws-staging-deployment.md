@@ -19,7 +19,7 @@ Menyediakan staging RembugBot yang aman dan terukur di AWS Singapore, tanpa meng
 ## Keputusan
 
 - Region: `ap-southeast-1`.
-- Staging awal: `t4g.medium` (2 vCPU, 4 GiB) agar OCR dan dua service memiliki margin; evaluasi downsize ke `t4g.small` setelah memory pilot terukur.
+- Staging awal: **`t4g.small` (2 vCPU, 2 GiB)** sesuai PRD/NFR-PERF-004 (gateway ≤256 MiB, worker ≤1 GiB, single job/OCR page). Naik ke `t4g.medium` (4 GiB) hanya jika memory p95 ≥80% atau OOM saat pilot PDF/OCR.
 - OS: Ubuntu Server 24.04 LTS ARM64 dari SSM public AMI parameter.
 - Akses operator: AWS Systems Manager Session Manager; security group tanpa inbound rule.
 - Storage: encrypted 20 GiB gp3.

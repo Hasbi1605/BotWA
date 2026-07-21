@@ -8,8 +8,9 @@ Parameters:
     AllowedValues: [staging]
   InstanceType:
     Type: String
-    Default: t4g.medium
+    Default: t4g.small
     AllowedValues: [t4g.small, t4g.medium]
+    Description: t4g.small=2GiB (PRD pilot); t4g.medium=4GiB if OCR OOMs under load
   AmiId:
     Type: AWS::EC2::Image::Id
   VpcId:
@@ -146,6 +147,17 @@ Resources:
           apt-get update
           apt-get install -y docker.io docker-compose-v2 git awscli
           systemctl enable --now docker
+
+          # 1 GiB encrypted-at-rest swap for OCR burst on 2 GiB hosts (PRD NFR-PERF-005)
+          if [ ! -f /swapfile ]; then
+            fallocate -l 1G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=1024
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            sysctl -w vm.swappiness=10
+            echo 'vm.swappiness=10' > /etc/sysctl.d/99-rembugbot-swap.conf
+          fi
 
           install -d -m 0755 /opt/rembugbot
           if [ ! -d /opt/rembugbot/app/.git ]; then

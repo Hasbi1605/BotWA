@@ -18,8 +18,10 @@ services:
       - temp-files:/data/temp
     networks:
       - rembugbot
-    mem_limit: 512m
-    memswap_limit: 512m
+    # Sized for host 2 GiB (t4g.small): PRD NFR-PERF-004 budget
+    # gateway ≤ ~256 MiB, worker+OCR ≤ ~1 GiB, leave ~700 MiB for OS/Docker/SSM
+    mem_limit: 256m
+    memswap_limit: 256m
     depends_on:
       worker:
         condition: service_healthy
@@ -37,7 +39,8 @@ services:
       - temp-files:/data/temp
     networks:
       - rembugbot
-    mem_limit: 1280m
+    # Single AI/PDF job + one OCR page at a time; do not raise without host ≥ 4 GiB
+    mem_limit: 1024m
     memswap_limit: 1280m
     healthcheck:
       test:

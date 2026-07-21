@@ -7,7 +7,8 @@ PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 PROFILE="${AWS_PROFILE:-rembugbot-provisioner}"
 REGION="${AWS_REGION:-ap-southeast-1}"
 STACK_NAME="${STACK_NAME:-rembugbot-staging}"
-INSTANCE_TYPE="${INSTANCE_TYPE:-t4g.medium}"
+# Default: t4g.small (2 GiB) per PRD pilot plan. Override with INSTANCE_TYPE=t4g.medium if OCR OOMs.
+INSTANCE_TYPE="${INSTANCE_TYPE:-t4g.small}"
 CONFIG_PARAMETER_NAME="${CONFIG_PARAMETER_NAME:-/rembugbot/staging/env}"
 TEMPLATE="$PROJECT_DIR/deploy/aws/staging.yml"
 
