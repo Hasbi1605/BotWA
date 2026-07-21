@@ -144,11 +144,17 @@ Resources:
           export DEBIAN_FRONTEND=noninteractive
           exec > >(tee -a /var/log/rembugbot-bootstrap.log | logger -t rembugbot-bootstrap) 2>&1
 
+          # Ubuntu 24 ARM: apt awscli is unavailable — install AWS CLI v2 binary
           apt-get update
-          apt-get install -y docker.io docker-compose-v2 git awscli
+          apt-get install -y docker.io docker-compose-v2 git curl unzip
           systemctl enable --now docker
+          if ! command -v aws >/dev/null 2>&1; then
+            curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip -o /tmp/awscliv2.zip
+            unzip -q /tmp/awscliv2.zip -d /tmp
+            /tmp/aws/install
+          fi
 
-          # 1 GiB encrypted-at-rest swap for OCR burst on 2 GiB hosts (PRD NFR-PERF-005)
+          # 1 GiB swap for OCR burst on 2 GiB hosts (PRD NFR-PERF-005)
           if [ ! -f /swapfile ]; then
             fallocate -l 1G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=1024
             chmod 600 /swapfile
