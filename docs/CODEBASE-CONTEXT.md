@@ -71,7 +71,7 @@ BotWhatsapp/
 - **Summary Service:** Preprocesses messages, calls AI cascade, validates output (anti-hallucination)
 - **PDF Service:** pdfplumber + Tesseract OCR, sensitivity gate, AI analysis
 - **Schedule Parser:** Local Indonesian date parser + AI fallback for ambiguous cases
-- **Provider Cascade:** GitHub Models with circuit breaker (429→30min cooldown, 401/403→disabled, 5xx→5min cooldown)
+- **Provider Cascade:** GitHub Models (`https://models.github.ai/inference`) with Magang-Istana dual-token order: `gpt-4.1` A/B → `gpt-4o` A/B → `gpt-4.1-mini` A/B → `gpt-4.1-nano` A/B. Circuit breaker: 429→30min, 401/403→disabled, 5xx→5min.
 
 ### Database (SQLite)
 - WAL mode, single-writer (gateway only)
@@ -101,7 +101,7 @@ BotWhatsapp/
 
 - Environment variables di `docker/.env`
 - Prompts di `worker/config/prompts/*.yaml`
-- Model routes di `app/providers/cascade.py`
+- Model routes di `worker/app/providers/cascade.py` (override via `SUMMARY_MODELS` / `PDF_MODELS` / `SCHEDULE_MODELS`)
 
 ## Deployment
 

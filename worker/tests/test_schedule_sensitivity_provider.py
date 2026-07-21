@@ -61,3 +61,43 @@ def test_provider_circuit_breaker_disables_auth_failure_and_cools_rate_limit():
     assert cascade.circuit_breakers["auth"].state == "disabled"
     assert cascade.circuit_breakers["rate"].state == "cooldown"
     assert cascade.circuit_breakers["rate"].cooldown_until > datetime.now(UTC)
+
+
+def test_provider_routes_use_magang_istana_cascade_order():
+    """Dual-token cascade: model A/B then next cheaper model (Magang-Istana style)."""
+    cascade = ProviderCascade()
+
+    summary = cascade.get_routes("summary")
+    pdf = cascade.get_routes("pdf")
+    schedule = cascade.get_routes("schedule")
+
+    # 4 models × 2 tokens
+    assert len(summary) == 8
+    assert len(pdf) == 8
+    # schedule starts at mini: 2 models × 2 tokens
+    assert len(schedule) == 4
+
+    expected_summary = [
+        ("openai/gpt-4.1", "token_a"),
+        ("openai/gpt-4.1", "token_b"),
+        ("openai/gpt-4o", "token_a"),
+        ("openai/gpt-4o", "token_b"),
+        ("openai/gpt-4.1-mini", "token_a"),
+        ("openai/gpt-4.1-mini", "token_b"),
+        ("openai/gpt-4.1-nano", "token_a"),
+        ("openai/gpt-4.1-nano", "token_b"),
+    ]
+    assert [(r.model_id, r.account_alias) for r in summary] == expected_summary
+    assert [(r.model_id, r.account_alias) for r in pdf] == expected_summary
+    assert [(r.model_id, r.account_alias) for r in schedule] == [
+        ("openai/gpt-4.1-mini", "token_a"),
+        ("openai/gpt-4.1-mini", "token_b"),
+        ("openai/gpt-4.1-nano", "token_a"),
+        ("openai/gpt-4.1-nano", "token_b"),
+    ]
+
+    for routes in cascade.routes.values():
+        for route in routes:
+            assert route.base_url == "https://models.github.ai/inference"
+            assert route.model_id.startswith("openai/")
+            assert route.token

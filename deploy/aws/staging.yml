@@ -1,0 +1,210 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: RembugBot staging on one private-by-default EC2 instance managed through SSM.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues: [staging]
+  InstanceType:
+    Type: String
+    Default: t4g.medium
+    AllowedValues: [t4g.small, t4g.medium]
+  AmiId:
+    Type: AWS::EC2::Image::Id
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  ConfigParameterName:
+    Type: String
+    Default: /rembugbot/staging/env
+  RepositoryUrl:
+    Type: String
+    Default: https://github.com/Hasbi1605/BotWA.git
+  RepositoryBranch:
+    Type: String
+    Default: main
+
+Resources:
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub rembugbot-backups-${AWS::AccountId}-${AWS::Region}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteBackupObjectsAfter30Days
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: Project
+          Value: RembugBot
+        - Key: Environment
+          Value: !Ref Environment
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub RembugBot-${Environment}-InstanceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: RembugBotRuntimeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadRuntimeConfig
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ConfigParameterName}
+              - Sid: ManageProjectBackups
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt BackupBucket.Arn
+                  - !Sub ${BackupBucket.Arn}/*
+      Tags:
+        - Key: Project
+          Value: RembugBot
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub RembugBot-${Environment}-InstanceProfile
+      Roles: [!Ref InstanceRole]
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RembugBot outbound-only; operator access is through SSM
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub RembugBot-${Environment}
+        - Key: Project
+          Value: RembugBot
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: '0'
+          GroupSet: [!Ref SecurityGroup]
+          SubnetId: !Ref SubnetId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 20
+            VolumeType: gp3
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          exec > >(tee -a /var/log/rembugbot-bootstrap.log | logger -t rembugbot-bootstrap) 2>&1
+
+          apt-get update
+          apt-get install -y docker.io docker-compose-v2 git awscli
+          systemctl enable --now docker
+
+          install -d -m 0755 /opt/rembugbot
+          if [ ! -d /opt/rembugbot/app/.git ]; then
+            git clone --branch '${RepositoryBranch}' --single-branch '${RepositoryUrl}' /opt/rembugbot/app
+          fi
+
+          aws ssm get-parameter \
+            --name '${ConfigParameterName}' \
+            --with-decryption \
+            --region '${AWS::Region}' \
+            --query Parameter.Value \
+            --output text > /opt/rembugbot/app/docker/.env
+          chmod 0600 /opt/rembugbot/app/docker/.env
+
+          cd /opt/rembugbot/app/docker
+          docker compose up --build -d
+      Tags:
+        - Key: Name
+          Value: !Sub RembugBot-${Environment}
+        - Key: Project
+          Value: RembugBot
+        - Key: Environment
+          Value: !Ref Environment
+
+  StatusCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub RembugBot-${Environment}-StatusCheckFailed
+      AlarmDescription: EC2 instance status check failed.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref Instance
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: missing
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: RembugBot-Monthly-40USD
+        BudgetLimit:
+          Amount: 40
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: MONTHLY
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  BackupBucketName:
+    Value: !Ref BackupBucket
+  SecurityGroupId:
+    Value: !Ref SecurityGroup
+  ConfigParameterName:
+    Value: !Ref ConfigParameterName

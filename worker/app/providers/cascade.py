@@ -1,10 +1,12 @@
 from __future__ import annotations
-import structlog
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
+import structlog
 from openai import AsyncOpenAI
+
 from app.config import get_settings
 
 logger = structlog.get_logger()
@@ -16,7 +18,7 @@ class ProviderRoute:
     account_alias: str
     model_id: str
     token: str
-    base_url: str = "https://models.inference.ai.azure.com"
+    base_url: str = "https://models.github.ai/inference"
 
 
 @dataclass
@@ -35,89 +37,58 @@ class CircuitBreakerState:
 
 
 class ProviderCascade:
-    """Manages AI provider routes with circuit breaker and fallback."""
+    """GitHub Models cascade with dual-token fallback (Magang-Istana style).
+
+    For each model in the lane list, try token A then token B before moving to the
+    next (cheaper) model:
+
+        gpt-4.1 / token_a
+        gpt-4.1 / token_b
+        gpt-4o  / token_a
+        gpt-4o  / token_b
+        mini    / token_a
+        mini    / token_b
+        nano    / token_a
+        nano    / token_b
+    """
 
     def __init__(self):
         settings = get_settings()
+        self.base_url = settings.github_models_base_url.rstrip("/")
         self.routes = self._build_routes(settings)
         self.circuit_breakers: dict[str, CircuitBreakerState] = {}
 
     def _build_routes(self, settings) -> dict[str, list[ProviderRoute]]:
-        """Build provider routes per lane."""
-        routes = {
-            "summary": [
-                ProviderRoute(
-                    id="summary-mini-a",
-                    account_alias="token_a",
-                    model_id=settings.summary_model_primary,
-                    token=settings.gh_models_token_a,
-                ),
-                ProviderRoute(
-                    id="summary-mini-b",
-                    account_alias="token_b",
-                    model_id=settings.summary_model_primary,
-                    token=settings.gh_models_token_b,
-                ),
-                ProviderRoute(
-                    id="summary-nano-a",
-                    account_alias="token_a",
-                    model_id=settings.summary_model_fallback,
-                    token=settings.gh_models_token_a,
-                ),
-                ProviderRoute(
-                    id="summary-nano-b",
-                    account_alias="token_b",
-                    model_id=settings.summary_model_fallback,
-                    token=settings.gh_models_token_b,
-                ),
-            ],
-            "pdf": [
-                ProviderRoute(
-                    id="pdf-gpt41-a",
-                    account_alias="token_a",
-                    model_id=settings.pdf_model_primary,
-                    token=settings.gh_models_token_a,
-                ),
-                ProviderRoute(
-                    id="pdf-gpt41-b",
-                    account_alias="token_b",
-                    model_id=settings.pdf_model_primary,
-                    token=settings.gh_models_token_b,
-                ),
-                ProviderRoute(
-                    id="pdf-gpt4o-a",
-                    account_alias="token_a",
-                    model_id=settings.pdf_model_fallback,
-                    token=settings.gh_models_token_a,
-                ),
-                ProviderRoute(
-                    id="pdf-gpt4o-b",
-                    account_alias="token_b",
-                    model_id=settings.pdf_model_fallback,
-                    token=settings.gh_models_token_b,
-                ),
-            ],
-            "schedule": [
-                ProviderRoute(
-                    id="schedule-nano-a",
-                    account_alias="token_a",
-                    model_id=settings.schedule_model,
-                    token=settings.gh_models_token_a,
-                ),
-                ProviderRoute(
-                    id="schedule-nano-b",
-                    account_alias="token_b",
-                    model_id=settings.schedule_model,
-                    token=settings.gh_models_token_b,
-                ),
-            ],
-        }
-        return routes
+        token_pairs = [
+            ("token_a", settings.gh_models_token_a),
+            ("token_b", settings.gh_models_token_b),
+        ]
+        # Drop empty tokens so a missing secondary key still works with one account
+        token_pairs = [(alias, tok) for alias, tok in token_pairs if tok]
+
+        built: dict[str, list[ProviderRoute]] = {}
+        for lane in ("summary", "pdf", "schedule"):
+            models = settings.model_list(lane)
+            lane_routes: list[ProviderRoute] = []
+            for model_id in models:
+                short = model_id.split("/")[-1].replace(".", "").replace("-", "")
+                for alias, token in token_pairs:
+                    lane_routes.append(
+                        ProviderRoute(
+                            id=f"{lane}-{short}-{alias[-1]}",
+                            account_alias=alias,
+                            model_id=model_id,
+                            token=token,
+                            base_url=self.base_url,
+                        )
+                    )
+            built[lane] = lane_routes
+        return built
 
     def get_routes(self, lane: str) -> list[ProviderRoute]:
-        """Get available routes for a lane, skipping those in cooldown."""
+        """Get available routes for a lane, skipping those in cooldown/disabled."""
         routes = self.routes.get(lane, [])
-        available = []
+        available: list[ProviderRoute] = []
         now = datetime.now(UTC)
 
         for route in routes:
@@ -147,7 +118,7 @@ class ProviderCascade:
         )
 
         try:
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "model": route.model_id,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -186,7 +157,6 @@ class ProviderCascade:
         cb.last_error_class = error_class
 
         if error_class == "rate_limit":
-            # 429: cooldown 30 minutes
             retry_after = getattr(error, "retry_after", None)
             if retry_after:
                 cb.cooldown_until = datetime.now(UTC) + timedelta(seconds=retry_after)
@@ -194,14 +164,11 @@ class ProviderCascade:
                 cb.cooldown_until = datetime.now(UTC) + timedelta(minutes=30)
             cb.state = "cooldown"
         elif error_class == "auth":
-            # 401/403: disabled until manual fix
             cb.state = "disabled"
         elif error_class in ("server_error", "timeout"):
-            # 5xx/timeout: cooldown 5 minutes
             cb.cooldown_until = datetime.now(UTC) + timedelta(minutes=5)
             cb.state = "cooldown"
         else:
-            # Other errors: cooldown 5 minutes
             cb.cooldown_until = datetime.now(UTC) + timedelta(minutes=5)
             cb.state = "cooldown"
 
@@ -209,6 +176,8 @@ class ProviderCascade:
         logger.warning(
             "Provider error recorded",
             route=route.id,
+            model=route.model_id,
+            account=route.account_alias,
             error_class=error_class,
             state=cb.state,
             consecutive_errors=cb.consecutive_errors,

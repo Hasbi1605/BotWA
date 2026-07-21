@@ -18,12 +18,16 @@ async def readiness(token: str = Depends(verify_token)):
     try:
         settings = get_settings()
         checks["config"] = "ok" if settings.worker_auth_token else "missing_token"
+        checks["ai_tokens"] = (
+            "ok"
+            if settings.gh_models_token_a and settings.gh_models_token_b
+            else "missing_tokens"
+        )
     except Exception:
         checks["config"] = "error"
 
     # Check temp directory
     import os
-    from app.config import get_settings
     settings = get_settings()
     checks["temp_dir"] = "ok" if os.path.isdir(settings.temp_dir) else "missing"
 

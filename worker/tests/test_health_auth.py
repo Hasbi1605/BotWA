@@ -28,5 +28,5 @@ def test_readiness_reports_config_and_temp_dir():
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "checks": {"config": "ok", "temp_dir": "ok"},
+        "checks": {"config": "ok", "ai_tokens": "ok", "temp_dir": "ok"},
     }
