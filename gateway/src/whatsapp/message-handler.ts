@@ -9,7 +9,13 @@ import * as messagesRepo from '../db/repositories/messages.repo.js';
 import * as documentsRepo from '../db/repositories/documents.repo.js';
 import * as jobsRepo from '../db/repositories/jobs.repo.js';
 import { hmacJid } from '../security/hmac.js';
-import { handleCommand } from '../commands/router.js';
+import { handleCommand, looksLikeCommand } from '../commands/router.js';
+import { getPending } from '../commands/pending.js';
+import {
+  checkAdminStatus,
+  findParticipant,
+  roleFromParticipant,
+} from '../auth/admin.js';
 import pino from 'pino';
 import { createHash } from 'crypto';
 import { mkdirSync, writeFileSync } from 'fs';
@@ -22,14 +28,11 @@ export async function handleMessage(
   msg: WAMessage,
   config: Config
 ): Promise<void> {
-  // Ignore bot's own messages
   if (msg.key.fromMe) return;
 
-  // Only process group messages
   const groupJid = msg.key.remoteJid;
   if (!groupJid?.endsWith('@g.us')) return;
 
-  // Check allowlist
   if (!isAllowlisted(groupJid, config)) {
     logger.info(
       { groupJid, allowlist: config.waGroupAllowlist },
@@ -38,34 +41,50 @@ export async function handleMessage(
     return;
   }
 
-  // Get or create group in DB
   let group = groupsRepo.findByJid(groupJid);
   if (!group) {
     group = groupsRepo.create(groupJid, '');
   }
 
-  // Skip processing if group is not active (but allow .aktifkan command)
   const textPreview =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
     '';
-  const isActivation = textPreview.trim().toLowerCase().startsWith('.aktifkan');
+  const trimmed = textPreview.trim();
+  const maybeCommand = looksLikeCommand(trimmed);
 
-  if (group.status !== 'active' && !isActivation) return;
+  // When inactive: only allow activation-related phrases (not all commands)
+  if (group.status !== 'active') {
+    const t = trimmed.toLowerCase();
+    const isActivationFlow =
+      t.startsWith('.aktifkan') ||
+      t.startsWith('aktifkan') ||
+      t === 'ya' ||
+      t === 'iya' ||
+      t === 'setuju' ||
+      t === 'tidak' ||
+      t === 'bantuan' ||
+      t === 'help';
+    if (!isActivationFlow) return;
+  }
 
-  // Get sender info
-  const senderJid = msg.key.participant || msg.participant || msg.key.remoteJid || '';
+  const senderJid =
+    msg.key.participant ||
+    (msg as any).participant ||
+    msg.key.remoteJid ||
+    '';
   const senderHmac = hmacJid(senderJid, config.hmacSecret, config.hmacKeyVersion);
 
-  // Get group metadata for admin check
+  // Admin role (LID-aware)
   let senderRole = 'member';
   try {
     const groupMeta = await sock.groupMetadata(groupJid);
-    const senderParticipant = groupMeta.participants.find(p => p.id === senderJid);
-    if (senderParticipant?.admin === 'superadmin') senderRole = 'superadmin';
-    else if (senderParticipant?.admin === 'admin') senderRole = 'admin';
+    senderRole = roleFromParticipant(findParticipant(groupMeta, senderJid));
+    // Fallback via dedicated helper if empty
+    if (senderRole === 'member') {
+      senderRole = await checkAdminStatus(sock, groupJid, senderJid);
+    }
 
-    // Update group name if empty
     if (!group.name && groupMeta.subject) {
       const db = (await import('../db/index.js')).getDb(config.dbPath);
       db.prepare('UPDATE groups SET name = ? WHERE id = ?').run(groupMeta.subject, group.id);
@@ -75,29 +94,35 @@ export async function handleMessage(
     logger.warn({ err }, 'Failed to fetch group metadata');
   }
 
-  // Find or create participant
   const pushName = msg.pushName || '';
-  const participant = participantsRepo.findOrCreate(group.id, senderHmac, config.hmacKeyVersion, pushName);
+  const participant = participantsRepo.findOrCreate(
+    group.id,
+    senderHmac,
+    config.hmacKeyVersion,
+    pushName
+  );
   if (participant.current_role !== senderRole) {
     participantsRepo.updateRole(participant.id, senderRole);
   }
 
-  // Normalize message
   const normalized = normalizeMessage(msg);
+  const pending = getPending(groupJid, participant.wa_jid_hmac);
 
-  // Check for commands first
-  if (normalized.content.startsWith('.')) {
-    await handleCommand(sock, {
+  // Commands / pending confirmations (admin YA/tidak, etc.)
+  if (maybeCommand || pending) {
+    await handleCommand({
+      sock,
       group,
       participant,
       senderRole,
       normalized,
       config,
     });
-    return;
+    // Activation commands should not be stored as regular chat noise
+    if (maybeCommand) return;
   }
 
-  // Store message
+  // Silent record all other group messages (community-bot style)
   const savedMsg = messagesRepo.insert({
     message_id: normalized.messageId,
     group_id: group.id,
@@ -109,10 +134,12 @@ export async function handleMessage(
     mentions: normalized.mentions ? JSON.stringify(normalized.mentions) : null,
   });
 
-  if (!savedMsg) return; // duplicate
+  if (!savedMsg) return;
 
-  // Handle documents (PDF): download media, persist file, enqueue analysis job
-  if (normalized.type === 'document' && isPdf(normalized.documentInfo?.mimeType, normalized.documentInfo?.fileName)) {
+  if (
+    normalized.type === 'document' &&
+    isPdf(normalized.documentInfo?.mimeType, normalized.documentInfo?.fileName)
+  ) {
     await handleIncomingPdf(sock, msg, {
       groupId: group.id,
       messageDbId: savedMsg.id,
@@ -123,11 +150,10 @@ export async function handleMessage(
     });
   }
 
-  logger.debug({
-    groupId: group.id,
-    msgId: normalized.messageId,
-    type: normalized.type,
-  }, 'Message stored');
+  logger.debug(
+    { groupId: group.id, msgId: normalized.messageId, type: normalized.type },
+    'Message stored'
+  );
 }
 
 function isPdf(mimeType?: string, fileName?: string): boolean {
@@ -149,7 +175,7 @@ async function handleIncomingPdf(
   }
 ): Promise<void> {
   try {
-    const buffer = await downloadMediaMessage(
+    const buffer = (await downloadMediaMessage(
       msg,
       'buffer',
       {},
@@ -157,7 +183,7 @@ async function handleIncomingPdf(
         logger: logger as any,
         reuploadRequest: sock.updateMediaMessage.bind(sock),
       }
-    ) as Buffer;
+    )) as Buffer;
 
     if (!buffer || buffer.length === 0) {
       logger.warn({ messageDbId: opts.messageDbId }, 'Empty PDF buffer downloaded');
@@ -184,7 +210,6 @@ async function handleIncomingPdf(
     const filePath = join(dir, `${doc.id}-${hash.slice(0, 12)}.pdf`);
     writeFileSync(filePath, buffer);
 
-    // Store raw PDF path (worker opens this as the PDF file)
     documentsRepo.updateStatus(doc.id, 'pending', { extracted_text_path: filePath });
 
     jobsRepo.create({
@@ -193,7 +218,10 @@ async function handleIncomingPdf(
       idempotency_key: `job:pdf_analyze:${doc.id}`,
     });
 
-    logger.info({ documentId: doc.id, filePath, bytes: buffer.length }, 'PDF stored and analysis job enqueued');
+    logger.info(
+      { documentId: doc.id, filePath, bytes: buffer.length },
+      'PDF stored and analysis job enqueued'
+    );
   } catch (err) {
     logger.error({ err, messageDbId: opts.messageDbId }, 'Failed to download/store PDF');
   }

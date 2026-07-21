@@ -179,11 +179,33 @@ export async function connectWhatsApp(config: Config): Promise<WASocket> {
     }
   });
 
-  sock.ev.on('group-participants.update', async (update) => {
+  const liveSock = sock;
+  liveSock.ev.on('group-participants.update', async (update) => {
     logger.info({ update }, 'Group participant update');
+    // When bot is added to a group, send short onboarding (if allowlisted)
+    try {
+      if (update.action === 'add' && liveSock.user?.id) {
+        const botCore = liveSock.user.id.split('@')[0].split(':')[0];
+        const added = (update.participants || []).some((p) => {
+          const id = typeof p === 'string' ? p : (p as any).id || p;
+          return String(id).includes(botCore);
+        });
+        if (added) {
+          const { isAllowlisted } = await import('../config/allowlist.js');
+          const { loadConfig } = await import('../config/index.js');
+          const cfg = loadConfig();
+          if (isAllowlisted(update.id, cfg)) {
+            const { sendOnboarding } = await import('../commands/router.js');
+            await sendOnboarding(liveSock, update.id);
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, 'group-participants onboarding failed');
+    }
   });
 
-  return sock;
+  return liveSock;
 }
 
 export function getSocket(): WASocket | null {

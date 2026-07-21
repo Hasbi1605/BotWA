@@ -3,44 +3,62 @@ import type { Group } from '../db/repositories/groups.repo.js';
 import { setActivated, updateStatus } from '../db/repositories/groups.repo.js';
 import { sendMessage } from '../whatsapp/outbound.js';
 
-const PRIVACY_NOTICE = `🔒 *Pemberitahuan Privasi RembugBot*
+/** Short onboarding when bot joins or is activated — casual Indonesian. */
+export const ONBOARDING = `Halo, saya *RembugBot* 👋
 
-Bot ini akan memproses pesan dalam grup ini untuk:
-• Membuat ringkasan otomatis 2x sehari (08.00 & 20.00 WIB)
-• Mendeteksi jadwal dan keputusan penting
-• Menganalisis dokumen PDF yang dibagikan
+Saya bantu:
+• Ringkas chat grup *2× sehari* (08.00 & 20.00 WIB)
+• Catat *jadwal* penting (admin cukup balas ya/tidak)
+• Baca *PDF* (data pribadi dilindungi)
 
-Data yang diproses:
-• Isi pesan grup (disimpan maksimal 14 hari)
-• Display name pengirim (sebagai pseudonym)
-• Dokumen PDF (dihapus dalam 24 jam)
+*Anggota:* tidak perlu perintah — chat biasa saja.
+*Admin grup:* ketik *aktifkan bot* untuk mulai.`;
 
-Data TIDAK dikirim ke WhatsApp atau pihak ketiga lainnya.
-Nomor telepon tidak dikirim ke layanan AI.
+export const PRIVACY_NOTICE = `🔒 *Privasi singkat*
 
-Untuk informasi lebih lanjut, hubungi admin grup.
+Bot akan membaca pesan di grup ini untuk membuat ringkasan & jadwal.
 
-Ketik *.aktifkan setuju* untuk mengonfirmasi.`;
+• Pesan disimpan maksimal *14 hari*
+• Nama tampilan dipakai sebagai samaran (bukan nomor HP)
+• PDF dihapus dalam *24 jam*
+• Data *tidak* dijual ke pihak lain
 
-export async function handleActivation(
+Admin: balas *YA* atau *setuju* untuk mengaktifkan.
+Balas *tidak* untuk membatalkan.`;
+
+export async function handleActivationStart(
   sock: WASocket,
   groupJid: string,
-  group: Group,
-  args: string[]
+  botIsAdmin: boolean
+): Promise<'privacy' | 'need_bot_admin'> {
+  if (!botIsAdmin) {
+    await sendMessage(
+      sock,
+      groupJid,
+      '⚠️ Jadikan *RembugBot sebagai admin grup* dulu, lalu ketik *aktifkan bot* lagi.\n\nTanpa admin, bot sulit membaca status admin & mengelola grup.'
+    );
+    return 'need_bot_admin';
+  }
+  await sendMessage(sock, groupJid, PRIVACY_NOTICE);
+  return 'privacy';
+}
+
+export async function handleActivationConfirm(
+  sock: WASocket,
+  groupJid: string,
+  group: Group
 ): Promise<void> {
-  if (args.length === 0) {
-    // Show privacy notice
-    await sendMessage(sock, groupJid, PRIVACY_NOTICE);
-    return;
-  }
+  setActivated(group.id);
+  await sendMessage(
+    sock,
+    groupJid,
+    `✅ *RembugBot aktif* di grup ini.
 
-  if (args[0] === 'setuju') {
-    setActivated(group.id);
-    await sendMessage(sock, groupJid, '✅ RembugBot telah diaktifkan untuk grup ini.\n\nKetik *.bantuan* untuk melihat daftar perintah.');
-    return;
-  }
+Anggota: chat biasa saja, tidak perlu perintah.
+Admin: ketik *bantuan* untuk menu singkat, atau *admin* untuk menu lengkap.
 
-  await sendMessage(sock, groupJid, 'Perintah tidak dikenal. Ketik *.aktifkan* untuk melihat pemberitahuan privasi.');
+Ringkasan otomatis: *08.00* & *20.00* WIB.`
+  );
 }
 
 export async function handlePause(
@@ -49,7 +67,7 @@ export async function handlePause(
   group: Group
 ): Promise<void> {
   updateStatus(group.id, 'paused');
-  await sendMessage(sock, groupJid, '⏸️ RembugBot dijeda. Ketik *.resume* untuk melanjutkan.');
+  await sendMessage(sock, groupJid, '⏸️ Bot dijeda. Ringkasan & deteksi jadwal berhenti sementara.\nAdmin: ketik *lanjut* untuk menghidupkan lagi.');
 }
 
 export async function handleResume(
@@ -58,7 +76,7 @@ export async function handleResume(
   group: Group
 ): Promise<void> {
   updateStatus(group.id, 'active');
-  await sendMessage(sock, groupJid, '▶️ RembugBot dilanjutkan.');
+  await sendMessage(sock, groupJid, '▶️ Bot aktif lagi. Ringkasan otomatis berjalan.');
 }
 
 const pendingDeletions = new Map<string, { groupId: number; expiresAt: number }>();
@@ -73,7 +91,6 @@ export async function handleDeleteData(
   const pending = pendingDeletions.get(key);
 
   if (pending && Date.now() < pending.expiresAt) {
-    // Second confirmation - delete data
     pendingDeletions.delete(key);
     const { getDb } = await import('../db/index.js');
     const db = getDb('');
@@ -81,14 +98,33 @@ export async function handleDeleteData(
     db.prepare('DELETE FROM documents WHERE group_id = ?').run(group.id);
     db.prepare('DELETE FROM summary_windows WHERE group_id = ?').run(group.id);
     db.prepare('DELETE FROM schedule_candidates WHERE group_id = ?').run(group.id);
-    db.prepare('DELETE FROM reminders WHERE schedule_id IN (SELECT id FROM schedules WHERE group_id = ?)').run(group.id);
+    db.prepare(
+      'DELETE FROM reminders WHERE schedule_id IN (SELECT id FROM schedules WHERE group_id = ?)'
+    ).run(group.id);
     db.prepare('DELETE FROM schedules WHERE group_id = ?').run(group.id);
     updateStatus(group.id, 'inactive');
-    await sendMessage(sock, groupJid, '🗑️ Seluruh data grup telah dihapus. Bot dinonaktifkan.');
+    await sendMessage(sock, groupJid, '🗑️ Data grup sudah dihapus. Bot dimatikan untuk grup ini.');
     return;
   }
 
-  // First request
   pendingDeletions.set(key, { groupId: group.id, expiresAt: Date.now() + 10 * 60 * 1000 });
-  await sendMessage(sock, groupJid, '⚠️ Anda yakin ingin menghapus seluruh data grup?\n\nKetik *.hapusdata* lagi dalam 10 menit untuk mengonfirmasi.');
+  await sendMessage(
+    sock,
+    groupJid,
+    '⚠️ Hapus *semua* data grup (pesan, ringkasan, jadwal)?\n\nBalas *YA* dalam 10 menit untuk konfirmasi, atau *tidak* untuk batal.'
+  );
+}
+
+export function clearDeletePending(groupJid: string, actorHmac: string): void {
+  pendingDeletions.delete(`${groupJid}:${actorHmac}`);
+}
+
+export function hasDeletePending(groupJid: string, actorHmac: string): boolean {
+  const p = pendingDeletions.get(`${groupJid}:${actorHmac}`);
+  if (!p) return false;
+  if (Date.now() > p.expiresAt) {
+    pendingDeletions.delete(`${groupJid}:${actorHmac}`);
+    return false;
+  }
+  return true;
 }

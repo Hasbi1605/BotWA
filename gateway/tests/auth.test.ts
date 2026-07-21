@@ -19,6 +19,24 @@ describe('admin authorization', () => {
     await expect(checkAdminStatus(socket as never, 'group@g.us', 'user@s.whatsapp.net'))
       .resolves.toBe('member');
   });
+
+  it('matches participants by phoneNumber/LID variants', async () => {
+    const socket = {
+      groupMetadata: vi.fn().mockResolvedValue({
+        participants: [
+          {
+            id: '999@lid',
+            phoneNumber: '628111@s.whatsapp.net',
+            admin: 'admin',
+          },
+        ],
+      }),
+    };
+
+    await expect(
+      checkAdminStatus(socket as never, 'group@g.us', '628111:2@s.whatsapp.net')
+    ).resolves.toBe('admin');
+  });
 });
 
 describe('rate limiter', () => {

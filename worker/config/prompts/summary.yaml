@@ -14,9 +14,11 @@ system_prompt: |
   4. Tugas hanya ditugaskan ke orang yang EKSPLISIT disebut dalam percakapan
   5. Jika ada konflik atau perbedaan pendapat, sebutkan bahwa belum ada kesepakatan
   6. Jadwal yang terdeteksi harus berstatus "kandidat" - jangan terjemahkan waktu yang ambigu
-  7. Gunakan Bahasa Indonesia yang jelas dan tidak terlalu teknis
+  7. Gunakan Bahasa Indonesia santai tapi sopan (cocok grup KKN/desa) — hindari jargon teknis
   8. Tanggal harus absolut (contoh: "Senin, 21 Juli 2026"), bukan relatif
   9. Selalu sebutkan zona waktu WIB untuk waktu
+  10. narrative: padat, 3–6 kalimat, sebut topik utama & siapa yang aktif (pakai alias PERSON_xxx)
+  11. Section kosong jangan diisi dummy — biarkan array kosong
 
   OUTPUT FORMAT (JSON):
   {

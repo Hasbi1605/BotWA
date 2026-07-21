@@ -301,77 +301,74 @@ async function processReminderJob(_job: jobsRepo.Job, _config: Config): Promise<
 }
 
 function renderSummary(output: any, summary: summariesRepo.SummaryWindow): string {
+  // Casual Indonesian layout inspired by community summary bots (mocasus/whatsapp-group-summary)
   const sections: string[] = [];
 
-  // Header
-  const startDate = new Date(summary.start_at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium' });
-  const endDate = new Date(summary.end_at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium' });
-  sections.push(`📊 *Ringkasan Grup*\n📅 ${startDate} — ${endDate}\n`);
+  const startDate = new Date(summary.start_at).toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const endDate = new Date(summary.end_at).toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  sections.push(`*Ringkasan grup — ${startDate} s/d ${endDate}*`);
 
-  // Activity stats
   if (output.activity) {
-    sections.push(`💬 ${output.activity.message_count} pesan dari ${output.activity.participant_count} anggota\n`);
+    sections.push(
+      `${output.activity.message_count} pesan · ${output.activity.participant_count} orang aktif`
+    );
   }
 
-  // Narrative
   if (output.narrative) {
-    sections.push(`📝 *Ringkasan*\n${output.narrative}\n`);
+    sections.push(`*Inti diskusi*\n${output.narrative}`);
   }
 
-  // Highlights
   if (output.highlights?.length > 0) {
-    sections.push('🔴 *Highlight Penting*');
-    for (const h of output.highlights.slice(0, 10)) {
+    sections.push('*Sorotan*');
+    for (const h of output.highlights.slice(0, 8)) {
       sections.push(`• ${h.text}`);
     }
-    sections.push('');
   }
 
-  // Important messages
   if (output.important_messages?.length > 0) {
-    sections.push('📌 *Pesan Penting*');
-    for (const m of output.important_messages.slice(0, 8)) {
+    sections.push('*Pesan penting*');
+    for (const m of output.important_messages.slice(0, 6)) {
       sections.push(`• ${m.speaker_alias}: "${m.quote}"`);
     }
-    sections.push('');
   }
 
-  // Decisions
   if (output.decisions?.length > 0) {
-    sections.push('✅ *Keputusan*');
+    sections.push('*Keputusan*');
     for (const d of output.decisions) {
       sections.push(`• ${d.text}`);
     }
-    sections.push('');
   }
 
-  // Tasks
   if (output.tasks?.length > 0) {
-    sections.push('📋 *Tugas*');
+    sections.push('*Tugas / PR*');
     for (const t of output.tasks) {
       let taskText = `• ${t.text}`;
       if (t.assignee_alias) taskText += ` — ${t.assignee_alias}`;
       sections.push(taskText);
     }
-    sections.push('');
   }
 
-  // Schedule candidates
   if (output.schedule_candidates?.length > 0) {
-    sections.push('📅 *Kandidat Jadwal*');
+    sections.push('*Usulan jadwal* (admin: balas YA / lihat *jadwal*)');
     for (const s of output.schedule_candidates) {
       let schedText = `• ${s.title}`;
       if (s.date) schedText += ` — ${s.date}`;
       if (s.time) schedText += ` ${s.time}`;
-      if (s.ambiguities?.length > 0) schedText += ` ⚠️`;
+      if (s.ambiguities?.length > 0) schedText += ` ⚠️ belum pasti`;
       sections.push(schedText);
     }
-    sections.push('');
   }
 
-  // Documents
   if (output.documents?.length > 0) {
-    sections.push('📄 *Dokumen*');
+    sections.push('*Dokumen*');
     for (const doc of output.documents) {
       sections.push(`• ${doc}`);
     }

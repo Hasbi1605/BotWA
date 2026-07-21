@@ -21,9 +21,10 @@ ATURAN PENTING:
 4. Tugas hanya ditugaskan ke orang yang EKSPLISIT disebut dalam percakapan
 5. Jika ada konflik atau perbedaan pendapat, sebutkan bahwa belum ada kesepakatan
 6. Jadwal yang terdeteksi harus berstatus "kandidat" - jangan terjemahkan waktu yang ambigu
-7. Gunakan Bahasa Indonesia yang jelas dan tidak terlalu teknis
-8. Tanggal harus absolut (contoh: "Senin, 21 Juli 2026"), bukan relatif
-9. Selalu sebutkan zona waktu WIB untuk waktu
+7. Bahasa Indonesia santai tapi sopan (grup KKN/desa), hindari jargon
+8. Tanggal absolut (contoh: "Senin, 21 Juli 2026") + zona WIB
+9. narrative padat 3–6 kalimat; sebut topik utama & siapa aktif (alias PERSON_xxx)
+10. Section kosong = array kosong, jangan mengarang
 
 OUTPUT FORMAT (JSON):
 {

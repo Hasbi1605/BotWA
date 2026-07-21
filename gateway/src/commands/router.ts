@@ -3,157 +3,302 @@ import type { Group } from '../db/repositories/groups.repo.js';
 import type { Participant } from '../db/repositories/participants.repo.js';
 import type { NormalizedMessage } from '../whatsapp/normalizer.js';
 import type { Config } from '../config/index.js';
-import { isAdmin } from '../auth/admin.js';
+import { isAdmin, isBotGroupAdmin } from '../auth/admin.js';
 import { checkRateLimit, formatRetryAfter } from '../auth/rate-limiter.js';
-import { handleActivation, handlePause, handleResume, handleDeleteData } from '../auth/consent.js';
+import {
+  handleActivationStart,
+  handleActivationConfirm,
+  handlePause,
+  handleResume,
+  handleDeleteData,
+  clearDeletePending,
+  ONBOARDING,
+} from '../auth/consent.js';
 import { sendMessage } from '../whatsapp/outbound.js';
 import * as auditRepo from '../db/repositories/audit.repo.js';
+import { parseIntent, looksLikeCommand } from './parse.js';
+import { setPending, getPending, clearPending } from './pending.js';
 
-interface CommandContext {
+export interface CommandContext {
   group: Group;
   participant: Participant;
   senderRole: string;
   normalized: NormalizedMessage;
   config: Config;
+  sock: WASocket;
 }
 
-export async function handleCommand(
-  sock: WASocket,
-  ctx: CommandContext
-): Promise<void> {
+export { looksLikeCommand };
+
+const HELP_MEMBER = `👋 *RembugBot*
+
+Saya ringkas chat grup *otomatis* 2× sehari (08.00 & 20.00 WIB).
+
+*Anggota:* chat biasa saja — tidak perlu perintah.
+*Admin grup:* ketik *aktifkan bot* (sekali) lalu *bantuan* / *admin*.`;
+
+const HELP_ADMIN = `🛠️ *Menu admin (singkat)*
+
+• *aktifkan bot* — nyalakan bot (+ setuju privasi)
+• *ringkas* — ringkasan sekarang
+• *jadwal* — lihat jadwal / usulan
+• *status* — status bot
+• *jeda* / *lanjut* — hentikan / hidupkan sementara
+• *hapus data* — hapus data grup (butuh konfirmasi YA)
+• *admin* — tampilkan menu ini lagi
+
+*Cara mudah:*
+Saat bot tanya, cukup balas *YA* / *tidak* / nomor pilihan.
+
+Anggota tidak perlu hafal perintah.`;
+
+export async function handleCommand(ctx: CommandContext): Promise<void> {
+  const { sock } = ctx;
   const groupJid = ctx.group.jid;
-  const content = ctx.normalized.content;
-  const parts = content.trim().split(/\s+/);
-  const command = parts[0].toLowerCase();
-  const args = parts.slice(1);
+  const raw = ctx.normalized.content;
+  const intent = parseIntent(raw);
+  const pending = getPending(groupJid, ctx.participant.wa_jid_hmac);
 
-  // Activation commands don't require admin
-  if (command === '.aktifkan') {
-    await handleActivation(sock, groupJid, ctx.group, args);
+  // Resolve yes/no against pending flows first
+  if (intent.name === 'confirm_yes' || intent.name === 'confirm_no') {
+    if (!isAdmin(ctx.senderRole)) {
+      // Members can ignore; don't spam
+      return;
+    }
+    if (!pending) {
+      if (intent.name === 'confirm_yes' || intent.name === 'confirm_no') {
+        // bare ya/tidak without context — ignore silently for natural chat
+        if (!raw.startsWith('.')) return;
+        await sendMessage(sock, groupJid, 'Tidak ada konfirmasi yang menunggu. Ketik *bantuan* untuk menu.');
+      }
+      return;
+    }
+    await handlePendingReply(ctx, pending, intent.name, intent.args[0]);
     return;
   }
 
-  // All other commands require admin
+  // Help is available to everyone (short member version)
+  if (intent.name === 'help') {
+    if (isAdmin(ctx.senderRole)) {
+      await sendMessage(sock, groupJid, HELP_ADMIN);
+    } else {
+      await sendMessage(sock, groupJid, HELP_MEMBER);
+    }
+    return;
+  }
+
+  // Everything below: admin only
   if (!isAdmin(ctx.senderRole)) {
-    await sendMessage(sock, groupJid, '⛔ Perintah ini hanya untuk admin grup.');
+    if (looksLikeCommand(raw)) {
+      await sendMessage(
+        sock,
+        groupJid,
+        '🙂 Perintah ini khusus *admin grup*.\nAnggota cukup chat biasa — bot yang kerja.'
+      );
+    }
     return;
   }
 
-  // Rate limiting
-  const rateLimitKey = `${ctx.group.id}:${ctx.participant.id}:${command}`;
-  const rateCheck = checkRateLimit(rateLimitKey, 10, 60_000);
+  // Rate limit admin actions
+  const rateLimitKey = `${ctx.group.id}:${ctx.participant.id}:${intent.name}`;
+  const rateCheck = checkRateLimit(rateLimitKey, 12, 60_000);
   if (!rateCheck.allowed) {
-    await sendMessage(sock, groupJid, `⏳ Terlalu sering. Coba lagi dalam ${formatRetryAfter(rateCheck.retryAfterMs!)}.`);
+    await sendMessage(
+      sock,
+      groupJid,
+      `⏳ Pelan-pelan ya. Coba lagi dalam ${formatRetryAfter(rateCheck.retryAfterMs!)}.`
+    );
     return;
   }
 
-  // Log admin action
   auditRepo.log({
     group_id: ctx.group.id,
     actor_hmac: ctx.participant.wa_jid_hmac,
-    command: content.substring(0, 200),
+    command: raw.substring(0, 200),
   });
 
-  // Route commands
-  switch (command) {
-    case '.bantuan':
-      await handleHelp(sock, groupJid);
-      break;
-
-    case '.status':
-      await handleStatus(sock, groupJid, ctx);
-      break;
-
-    case '.pause':
-      await handlePause(sock, groupJid, ctx.group);
-      break;
-
-    case '.resume':
-      await handleResume(sock, groupJid, ctx.group);
-      break;
-
-    case '.hapusdata':
-      await handleDeleteData(sock, groupJid, ctx.group, ctx.participant.wa_jid_hmac);
-      break;
-
-    case '.ringkas':
-      if (args[0] === 'sekarang') {
-        await handleSummaryNow(sock, groupJid, ctx);
-      } else {
-        await sendMessage(sock, groupJid, 'Ketik *.ringkas sekarang* untuk ringkasan manual.');
+  switch (intent.name) {
+    case 'activate': {
+      const botAdmin = await isBotGroupAdmin(sock, groupJid);
+      const step = await handleActivationStart(sock, groupJid, botAdmin);
+      if (step === 'privacy') {
+        setPending(groupJid, ctx.participant.wa_jid_hmac, {
+          kind: 'activate',
+          groupId: ctx.group.id,
+        });
       }
       break;
-
-    case '.jadwal':
-      await handleSchedule(sock, groupJid, ctx, args);
+    }
+    case 'activate_confirm': {
+      const botAdmin = await isBotGroupAdmin(sock, groupJid);
+      if (!botAdmin) {
+        await handleActivationStart(sock, groupJid, false);
+        break;
+      }
+      clearPending(groupJid, ctx.participant.wa_jid_hmac);
+      await handleActivationConfirm(sock, groupJid, ctx.group);
       break;
-
-    case '.pdf':
-      await handlePdfCommand(sock, groupJid, ctx, args);
+    }
+    case 'help_admin':
+      await sendMessage(sock, groupJid, HELP_ADMIN);
       break;
-
+    case 'status':
+      await handleStatus(ctx);
+      break;
+    case 'summary':
+      await handleSummaryNow(ctx);
+      break;
+    case 'pause':
+      await handlePause(sock, groupJid, ctx.group);
+      break;
+    case 'resume':
+      await handleResume(sock, groupJid, ctx.group);
+      break;
+    case 'delete_data':
+      setPending(groupJid, ctx.participant.wa_jid_hmac, {
+        kind: 'delete',
+        groupId: ctx.group.id,
+      });
+      await handleDeleteData(sock, groupJid, ctx.group, ctx.participant.wa_jid_hmac);
+      break;
+    case 'schedule_list':
+      await handleScheduleList(ctx);
+      break;
+    case 'schedule_add':
+      await handleScheduleAdd(ctx);
+      break;
+    case 'schedule_confirm':
+      await handleScheduleConfirm(ctx, intent.args[0]);
+      break;
+    case 'schedule_reject':
+      await handleScheduleReject(ctx, intent.args[0]);
+      break;
+    case 'schedule_cancel':
+      await handleScheduleCancel(ctx, intent.args[0]);
+      break;
+    case 'pdf_list':
+      await handlePdfList(ctx);
+      break;
+    case 'pdf_allow':
+      await handlePdfAllow(ctx, intent.args[0]);
+      break;
+    case 'pdf_retry':
+      await handlePdfRetry(ctx, intent.args[0]);
+      break;
+    case 'unknown':
+      if (raw.startsWith('.') || looksLikeCommand(raw)) {
+        await sendMessage(
+          sock,
+          groupJid,
+          'Hmm, belum ketemu perintah itu.\nKetik *bantuan* (singkat) atau *admin* (lengkap).'
+        );
+      }
+      break;
     default:
-      await sendMessage(sock, groupJid, `Perintah tidak dikenal: ${command}\nKetik *.bantuan* untuk daftar perintah.`);
+      break;
   }
 }
 
-async function handleHelp(sock: WASocket, groupJid: string): Promise<void> {
-  const helpText = `📋 *Daftar Perintah Admin*
+async function handlePendingReply(
+  ctx: CommandContext,
+  pending: NonNullable<ReturnType<typeof getPending>>,
+  answer: 'confirm_yes' | 'confirm_no',
+  pick?: string
+): Promise<void> {
+  const { sock, group, participant } = ctx;
+  const groupJid = group.jid;
 
-*.aktifkan* — Aktifkan bot di grup
-*.ringkas sekarang* — Buat ringkasan sekarang
-*.jadwal* — Lihat jadwal dan kandidat
-*.jadwal tambah "judul" DD-MM-YYYY HH:mm "lokasi"* — Tambah jadwal
-*.jadwal konfirmasi <id>* — Konfirmasi kandidat jadwal
-*.jadwal batal <id>* — Batalkan jadwal
-*.jadwal tolak <id>* — Tolak kandidat
-*.pdf proses <id>* — Proses ulang PDF
-*.pdf izinkan <id>* — Izinkan PDF sensitif
-*.status* — Status bot
-*.pause* — Jeda bot
-*.resume* — Lanjutkan bot
-*.hapusdata* — Hapus data grup
-*.bantuan* — Tampilkan bantuan ini`;
+  if (answer === 'confirm_no') {
+    clearPending(groupJid, participant.wa_jid_hmac);
+    clearDeletePending(groupJid, participant.wa_jid_hmac);
+    await sendMessage(sock, groupJid, 'Baik, dibatalkan.');
+    return;
+  }
 
-  await sendMessage(sock, groupJid, helpText);
+  if (pending.kind === 'activate') {
+    clearPending(groupJid, participant.wa_jid_hmac);
+    const botAdmin = await isBotGroupAdmin(sock, groupJid);
+    if (!botAdmin) {
+      await handleActivationStart(sock, groupJid, false);
+      return;
+    }
+    await handleActivationConfirm(sock, groupJid, group);
+    return;
+  }
+
+  if (pending.kind === 'delete') {
+    clearPending(groupJid, participant.wa_jid_hmac);
+    // Second confirmation via handleDeleteData (still needs second call path)
+    await handleDeleteData(sock, groupJid, group, participant.wa_jid_hmac);
+    return;
+  }
+
+  if (pending.kind === 'schedule_pick' && pending.options?.length) {
+    const idx = pick ? parseInt(pick, 10) - 1 : 0;
+    const id = pending.options[idx] ?? pending.options[0];
+    clearPending(groupJid, participant.wa_jid_hmac);
+    await handleScheduleConfirm(ctx, String(id));
+    return;
+  }
+
+  if (pending.kind === 'pdf_pick' && pending.options?.length) {
+    const idx = pick ? parseInt(pick, 10) - 1 : 0;
+    const id = pending.options[idx] ?? pending.options[0];
+    clearPending(groupJid, participant.wa_jid_hmac);
+    await handlePdfAllow(ctx, String(id));
+    return;
+  }
+
+  clearPending(groupJid, participant.wa_jid_hmac);
+  await sendMessage(sock, groupJid, 'Konfirmasi tidak dikenali. Ketik *bantuan*.');
 }
 
-async function handleStatus(sock: WASocket, groupJid: string, ctx: CommandContext): Promise<void> {
+async function handleStatus(ctx: CommandContext): Promise<void> {
   const { isConnected } = await import('../whatsapp/connection.js');
   const messagesRepo = await import('../db/repositories/messages.repo.js');
   const summariesRepo = await import('../db/repositories/summaries.repo.js');
 
-  const messageCount = messagesRepo.countByGroup(ctx.group.id, new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  const messageCount = messagesRepo.countByGroup(
+    ctx.group.id,
+    new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  );
   const lastSummary = summariesRepo.getLastCompleted(ctx.group.id);
+  const statusLabel =
+    ctx.group.status === 'active'
+      ? 'Aktif'
+      : ctx.group.status === 'paused'
+        ? 'Dijeda'
+        : 'Belum aktif';
 
-  const statusText = `📊 *Status RembugBot*
+  await sendMessage(
+    ctx.sock,
+    ctx.group.jid,
+    `📊 *Status bot*
 
-🟢 WhatsApp: ${isConnected() ? 'Terhubung' : 'Terputus'}
-📱 Grup: ${ctx.group.status}
-💬 Pesan 24 jam: ${messageCount}
-📝 Ringkasan terakhir: ${lastSummary ? lastSummary.completed_at : 'Belum ada'}
-⏰ ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`;
-
-  await sendMessage(sock, groupJid, statusText);
+WhatsApp: ${isConnected() ? 'Terhubung ✅' : 'Terputus ⚠️'}
+Grup: ${statusLabel}
+Pesan 24 jam: ${messageCount}
+Ringkasan terakhir: ${lastSummary?.completed_at ? new Date(lastSummary.completed_at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }) : 'Belum ada'}
+Waktu: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`
+  );
 }
 
-async function handleSummaryNow(sock: WASocket, groupJid: string, ctx: CommandContext): Promise<void> {
-  const { checkRateLimit } = await import('../auth/rate-limiter.js');
-
-  // Rate limit: 1 per 30 minutes, max 4 per day
+async function handleSummaryNow(ctx: CommandContext): Promise<void> {
   const rateCheck = checkRateLimit(`summary:${ctx.group.id}`, 4, 24 * 60 * 60 * 1000);
   if (!rateCheck.allowed) {
-    await sendMessage(sock, groupJid, '⏳ Batas ringkasan manual tercapai (4x/hari).');
+    await sendMessage(ctx.sock, ctx.group.jid, '⏳ Batas ringkasan manual hari ini sudah tercapai (4×).');
     return;
   }
-
   const rateCheck30 = checkRateLimit(`summary30:${ctx.group.id}`, 1, 30 * 60 * 1000);
   if (!rateCheck30.allowed) {
-    await sendMessage(sock, groupJid, `⏳ Tunggu ${formatRetryAfter(rateCheck30.retryAfterMs!)} sebelum ringkasan manual berikutnya.`);
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      `⏳ Tunggu ${formatRetryAfter(rateCheck30.retryAfterMs!)} sebelum minta ringkasan lagi.`
+    );
     return;
   }
 
-  // Create summary job
   const jobsRepo = await import('../db/repositories/jobs.repo.js');
   const summariesRepo = await import('../db/repositories/summaries.repo.js');
   const { DateTime } = await import('luxon');
@@ -171,7 +316,7 @@ async function handleSummaryNow(sock: WASocket, groupJid: string, ctx: CommandCo
   });
 
   if (!summary) {
-    await sendMessage(sock, groupJid, 'Ringkasan dengan periode ini sudah dibuat.');
+    await sendMessage(ctx.sock, ctx.group.jid, 'Ringkasan periode ini sudah ada / sedang diproses.');
     return;
   }
 
@@ -181,185 +326,245 @@ async function handleSummaryNow(sock: WASocket, groupJid: string, ctx: CommandCo
     idempotency_key: `job:summary:${summary.id}`,
   });
 
-  await sendMessage(sock, groupJid, '📝 Ringkasan manual sedang dibuat...');
+  await sendMessage(ctx.sock, ctx.group.jid, '📝 Oke, ringkasan sedang dibuat. Sebentar ya…');
 }
 
-async function handleSchedule(sock: WASocket, groupJid: string, ctx: CommandContext, args: string[]): Promise<void> {
+async function handleScheduleList(ctx: CommandContext): Promise<void> {
   const schedulesRepo = await import('../db/repositories/schedules.repo.js');
+  const active = schedulesRepo.getActiveByGroup(ctx.group.id);
+  const candidates = schedulesRepo.getCandidatesByGroup(ctx.group.id);
 
-  if (args.length === 0) {
-    // List schedules and candidates
-    const active = schedulesRepo.getActiveByGroup(ctx.group.id);
-    const candidates = schedulesRepo.getCandidatesByGroup(ctx.group.id);
-
-    let text = '';
-
-    if (active.length > 0) {
-      text += '📅 *Jadwal Terkonfirmasi*\n';
-      for (const s of active) {
-        const date = new Date(s.starts_at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'full', timeStyle: 'short' });
-        text += `• #${s.id} ${s.title} — ${date}`;
-        if (s.location) text += ` @ ${s.location}`;
-        text += '\n';
-      }
-    }
-
-    if (candidates.length > 0) {
-      text += '\n🔍 *Kandidat Jadwal*\n';
-      for (const c of candidates) {
-        text += `• #${c.id} ${c.title}`;
-        if (c.date) text += ` — ${c.date}`;
-        if (c.time) text += ` ${c.time}`;
-        if (c.location) text += ` @ ${c.location}`;
-        if (c.ambiguities) {
-          const amb = JSON.parse(c.ambiguities);
-          if (amb.length > 0) text += ` ⚠️ ${amb.join(', ')}`;
-        }
-        text += '\n';
-      }
-    }
-
-    if (!text) text = 'Tidak ada jadwal atau kandidat aktif.';
-
-    await sendMessage(sock, groupJid, text);
-    return;
-  }
-
-  const subCommand = args[0];
-
-  if (subCommand === 'tambah' && args.length >= 3) {
-    // Parse: .jadwal tambah "judul" DD-MM-YYYY HH:mm "lokasi"
-    const raw = ctx.normalized.content;
-    const titleMatch = raw.match(/"([^"]+)"/);
-    const dateMatch = args.find(a => a.match(/\d{2}-\d{2}-\d{4}/));
-    const timeMatch = args.find(a => a.match(/\d{2}:\d{2}/));
-    const locMatch = raw.match(/"([^"]+)"\s*$/);
-
-    if (!titleMatch || !dateMatch) {
-      await sendMessage(sock, groupJid, 'Format: *.jadwal tambah "judul" DD-MM-YYYY HH:mm "lokasi"');
-      return;
-    }
-
-    const { DateTime } = await import('luxon');
-    const localStartsAt = DateTime.fromFormat(
-      `${dateMatch} ${timeMatch || '00:00'}`,
-      'dd-MM-yyyy HH:mm',
-      { zone: 'Asia/Jakarta' },
+  if (active.length === 0 && candidates.length === 0) {
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      '📅 Belum ada jadwal.\n\nKalau ada rencana di chat, bot akan usulkan nanti.\nAdmin bisa balas *YA* untuk menyetujui usulan.'
     );
-    if (!localStartsAt.isValid) {
-      await sendMessage(sock, groupJid, 'Tanggal atau waktu tidak valid.');
-      return;
-    }
-    const startsAt = localStartsAt.toUTC().toISO()!;
+    return;
+  }
 
-    const schedule = schedulesRepo.createSchedule({
-      group_id: ctx.group.id,
-      title: titleMatch[1],
-      starts_at: startsAt,
-      location: locMatch?.[1] || null,
+  let text = '';
+  if (active.length > 0) {
+    text += '📅 *Jadwal*\n';
+    for (const s of active) {
+      const date = new Date(s.starts_at).toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        dateStyle: 'full',
+        timeStyle: 'short',
+      });
+      text += `• ${s.title} — ${date}`;
+      if (s.location) text += ` @ ${s.location}`;
+      text += '\n';
+    }
+  }
+
+  if (candidates.length > 0) {
+    text += '\n🔎 *Usulan (menunggu admin)*\n';
+    const ids: number[] = [];
+    candidates.forEach((c, i) => {
+      ids.push(c.id);
+      text += `${i + 1}. ${c.title}`;
+      if (c.date) text += ` — ${c.date}`;
+      if (c.time) text += ` ${c.time}`;
+      if (c.location) text += ` @ ${c.location}`;
+      text += '\n';
     });
-
-    // Schedule day-before + two-hours-before reminders
-    const { scheduleRemindersFor } = await import('../db/repositories/reminders.repo.js');
-    scheduleRemindersFor(schedule.id, schedule.starts_at);
-    await enqueueReminderSweep(ctx);
-
-    await sendMessage(sock, groupJid, `✅ Jadwal ditambahkan: #${schedule.id} ${schedule.title}`);
-    return;
+    text += '\nBalas *YA* (setujui pertama) atau nomor pilihan, atau *tidak* untuk tolak semua usulan teratas.';
+    setPending(ctx.group.jid, ctx.participant.wa_jid_hmac, {
+      kind: 'schedule_pick',
+      groupId: ctx.group.id,
+      options: ids,
+    });
   }
 
-  if (subCommand === 'konfirmasi' && args[1]) {
-    const candidateId = parseInt(args[1], 10);
-    const candidate = schedulesRepo.findCandidateById(candidateId);
-
-    if (!candidate || candidate.group_id !== ctx.group.id || candidate.status !== 'candidate') {
-      await sendMessage(sock, groupJid, 'Kandidat tidak ditemukan atau sudah diproses.');
-      return;
-    }
-
-    const schedule = schedulesRepo.confirmCandidate(candidateId);
-    const { scheduleRemindersFor } = await import('../db/repositories/reminders.repo.js');
-    scheduleRemindersFor(schedule.id, schedule.starts_at);
-    await enqueueReminderSweep(ctx);
-
-    await sendMessage(sock, groupJid, `✅ Jadwal dikonfirmasi: #${schedule.id} ${schedule.title}`);
-    return;
-  }
-
-  if (subCommand === 'batal' && args[1]) {
-    const scheduleId = parseInt(args[1], 10);
-    const schedule = schedulesRepo.findScheduleById(scheduleId);
-
-    if (!schedule || schedule.group_id !== ctx.group.id) {
-      await sendMessage(sock, groupJid, 'Jadwal tidak ditemukan.');
-      return;
-    }
-
-    schedulesRepo.cancelSchedule(scheduleId);
-    await sendMessage(sock, groupJid, `❌ Jadwal #${scheduleId} dibatalkan.`);
-    return;
-  }
-
-  if (subCommand === 'tolak' && args[1]) {
-    const candidateId = parseInt(args[1], 10);
-    schedulesRepo.rejectCandidate(candidateId);
-    await sendMessage(sock, groupJid, `❌ Kandidat #${candidateId} ditolak.`);
-    return;
-  }
-
-  await sendMessage(sock, groupJid, 'Format tidak valid. Ketik *.jadwal* untuk melihat daftar.');
+  await sendMessage(ctx.sock, ctx.group.jid, text.trim());
 }
 
-async function handlePdfCommand(sock: WASocket, groupJid: string, ctx: CommandContext, args: string[]): Promise<void> {
-  if (args.length < 2) {
-    await sendMessage(sock, groupJid, 'Format: *.pdf proses <id>* atau *.pdf izinkan <id>*');
+async function handleScheduleAdd(ctx: CommandContext): Promise<void> {
+  const schedulesRepo = await import('../db/repositories/schedules.repo.js');
+  const raw = ctx.normalized.content;
+  const titleMatch = raw.match(/"([^"]+)"/);
+  const dateMatch = raw.match(/\b(\d{2}-\d{2}-\d{4})\b/);
+  const timeMatch = raw.match(/\b(\d{2}:\d{2})\b/);
+  const titles = [...raw.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const location = titles.length > 1 ? titles[titles.length - 1] : null;
+
+  if (!titleMatch || !dateMatch) {
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      'Tambah jadwal contoh:\n*jadwal tambah "Rapat" 25-07-2026 15:00 "Balai desa"*'
+    );
     return;
   }
 
-  const subCommand = args[0];
-  const docId = parseInt(args[1], 10);
+  const { DateTime } = await import('luxon');
+  const localStartsAt = DateTime.fromFormat(
+    `${dateMatch[1]} ${timeMatch?.[1] || '00:00'}`,
+    'dd-MM-yyyy HH:mm',
+    { zone: 'Asia/Jakarta' }
+  );
+  if (!localStartsAt.isValid) {
+    await sendMessage(ctx.sock, ctx.group.jid, 'Tanggal/waktu tidak valid. Pakai DD-MM-YYYY HH:mm');
+    return;
+  }
+
+  const schedule = schedulesRepo.createSchedule({
+    group_id: ctx.group.id,
+    title: titleMatch[1],
+    starts_at: localStartsAt.toUTC().toISO()!,
+    location,
+  });
+
+  const { scheduleRemindersFor } = await import('../db/repositories/reminders.repo.js');
+  scheduleRemindersFor(schedule.id, schedule.starts_at);
+  await enqueueReminderSweep(ctx);
+
+  await sendMessage(ctx.sock, ctx.group.jid, `✅ Jadwal dicatat: *${schedule.title}*`);
+}
+
+async function handleScheduleConfirm(ctx: CommandContext, idStr?: string): Promise<void> {
+  const schedulesRepo = await import('../db/repositories/schedules.repo.js');
+  let candidateId = idStr ? parseInt(idStr, 10) : NaN;
+
+  if (!Number.isFinite(candidateId)) {
+    const candidates = schedulesRepo.getCandidatesByGroup(ctx.group.id);
+    if (candidates.length === 1) candidateId = candidates[0].id;
+    else if (candidates.length > 1) {
+      await handleScheduleList(ctx);
+      return;
+    } else {
+      await sendMessage(ctx.sock, ctx.group.jid, 'Tidak ada usulan jadwal untuk dikonfirmasi.');
+      return;
+    }
+  }
+
+  const candidate = schedulesRepo.findCandidateById(candidateId);
+  if (!candidate || candidate.group_id !== ctx.group.id || candidate.status !== 'candidate') {
+    await sendMessage(ctx.sock, ctx.group.jid, 'Usulan tidak ditemukan atau sudah diproses.');
+    return;
+  }
+
+  const schedule = schedulesRepo.confirmCandidate(candidateId);
+  const { scheduleRemindersFor } = await import('../db/repositories/reminders.repo.js');
+  scheduleRemindersFor(schedule.id, schedule.starts_at);
+  await enqueueReminderSweep(ctx);
+  await sendMessage(ctx.sock, ctx.group.jid, `✅ Jadwal disetujui: *${schedule.title}*`);
+}
+
+async function handleScheduleReject(ctx: CommandContext, idStr?: string): Promise<void> {
+  const schedulesRepo = await import('../db/repositories/schedules.repo.js');
+  let candidateId = idStr ? parseInt(idStr, 10) : NaN;
+  if (!Number.isFinite(candidateId)) {
+    const candidates = schedulesRepo.getCandidatesByGroup(ctx.group.id);
+    if (candidates.length === 1) candidateId = candidates[0].id;
+    else {
+      await sendMessage(ctx.sock, ctx.group.jid, 'Sebut usulan mana: *jadwal* dulu, lalu balas nomornya.');
+      return;
+    }
+  }
+  schedulesRepo.rejectCandidate(candidateId);
+  await sendMessage(ctx.sock, ctx.group.jid, 'Usulan jadwal ditolak.');
+}
+
+async function handleScheduleCancel(ctx: CommandContext, idStr?: string): Promise<void> {
+  const schedulesRepo = await import('../db/repositories/schedules.repo.js');
+  const scheduleId = idStr ? parseInt(idStr, 10) : NaN;
+  if (!Number.isFinite(scheduleId)) {
+    await sendMessage(ctx.sock, ctx.group.jid, 'Contoh: *jadwal batal 3* (lihat daftar di *jadwal*).');
+    return;
+  }
+  const schedule = schedulesRepo.findScheduleById(scheduleId);
+  if (!schedule || schedule.group_id !== ctx.group.id) {
+    await sendMessage(ctx.sock, ctx.group.jid, 'Jadwal tidak ditemukan.');
+    return;
+  }
+  schedulesRepo.cancelSchedule(scheduleId);
+  await sendMessage(ctx.sock, ctx.group.jid, `Jadwal *${schedule.title}* dibatalkan.`);
+}
+
+async function handlePdfList(ctx: CommandContext): Promise<void> {
+  const documentsRepo = await import('../db/repositories/documents.repo.js');
+  const docs = documentsRepo.getByGroup(ctx.group.id).slice(0, 8);
+  if (docs.length === 0) {
+    await sendMessage(ctx.sock, ctx.group.jid, 'Belum ada PDF yang diproses di grup ini.');
+    return;
+  }
+  let text = '📄 *PDF terakhir*\n';
+  const heldIds: number[] = [];
+  docs.forEach((d, i) => {
+    text += `${i + 1}. ${d.filename} — ${d.status}`;
+    if (d.sensitivity === 'held') {
+      text += ' ⚠️ ditahan';
+      heldIds.push(d.id);
+    }
+    text += '\n';
+  });
+  if (heldIds.length > 0) {
+    text += '\nAda PDF ditahan (data sensitif). Balas *YA* untuk izinkan yang pertama, atau *pdf izinkan <no>*.';
+    setPending(ctx.group.jid, ctx.participant.wa_jid_hmac, {
+      kind: 'pdf_pick',
+      groupId: ctx.group.id,
+      options: heldIds,
+    });
+  }
+  await sendMessage(ctx.sock, ctx.group.jid, text.trim());
+}
+
+async function handlePdfAllow(ctx: CommandContext, idStr?: string): Promise<void> {
   const documentsRepo = await import('../db/repositories/documents.repo.js');
   const jobsRepo = await import('../db/repositories/jobs.repo.js');
+  const docId = idStr ? parseInt(idStr, 10) : NaN;
+  if (!Number.isFinite(docId)) {
+    await handlePdfList(ctx);
+    return;
+  }
   const doc = documentsRepo.findById(docId);
-
   if (!doc || doc.group_id !== ctx.group.id) {
-    await sendMessage(sock, groupJid, 'Dokumen tidak ditemukan.');
+    await sendMessage(ctx.sock, ctx.group.jid, 'PDF tidak ditemukan.');
     return;
   }
-
-  if (subCommand === 'proses') {
-    documentsRepo.updateStatus(docId, 'pending');
-    jobsRepo.create({
-      type: 'pdf_analyze',
-      payload_ref: JSON.stringify({ documentId: docId }),
-      idempotency_key: `job:pdf_analyze:retry:${docId}:${Date.now()}`,
-    });
-    await sendMessage(sock, groupJid, `📄 PDF #${docId} akan diproses ulang.`);
-    return;
-  }
-
-  if (subCommand === 'izinkan') {
-    documentsRepo.updateStatus(docId, 'pending', { sensitivity: 'cleared_by_admin' });
-    jobsRepo.create({
-      type: 'pdf_analyze',
-      payload_ref: JSON.stringify({ documentId: docId }),
-      idempotency_key: `job:pdf_analyze:allow:${docId}:${Date.now()}`,
-    });
-    await sendMessage(sock, groupJid, `✅ PDF #${docId} diizinkan untuk diproses.`);
-    return;
-  }
-
-  await sendMessage(sock, groupJid, 'Perintah PDF tidak dikenal.');
+  documentsRepo.updateStatus(docId, 'pending', { sensitivity: 'cleared_by_admin' });
+  jobsRepo.create({
+    type: 'pdf_analyze',
+    payload_ref: JSON.stringify({ documentId: docId }),
+    idempotency_key: `job:pdf_analyze:allow:${docId}:${Date.now()}`,
+  });
+  await sendMessage(ctx.sock, ctx.group.jid, `✅ PDF *${doc.filename}* diizinkan & akan diproses.`);
 }
 
-/** Ensure a periodic reminder sweep job exists so due reminders get sent. */
+async function handlePdfRetry(ctx: CommandContext, idStr?: string): Promise<void> {
+  const documentsRepo = await import('../db/repositories/documents.repo.js');
+  const jobsRepo = await import('../db/repositories/jobs.repo.js');
+  const docId = idStr ? parseInt(idStr, 10) : NaN;
+  if (!Number.isFinite(docId)) {
+    await sendMessage(ctx.sock, ctx.group.jid, 'Contoh: *pdf proses 2* — lihat daftar di *pdf*.');
+    return;
+  }
+  const doc = documentsRepo.findById(docId);
+  if (!doc || doc.group_id !== ctx.group.id) {
+    await sendMessage(ctx.sock, ctx.group.jid, 'PDF tidak ditemukan.');
+    return;
+  }
+  documentsRepo.updateStatus(docId, 'pending');
+  jobsRepo.create({
+    type: 'pdf_analyze',
+    payload_ref: JSON.stringify({ documentId: docId }),
+    idempotency_key: `job:pdf_analyze:retry:${docId}:${Date.now()}`,
+  });
+  await sendMessage(ctx.sock, ctx.group.jid, `📄 PDF *${doc.filename}* diproses ulang.`);
+}
+
 async function enqueueReminderSweep(ctx: CommandContext): Promise<void> {
   const jobsRepo = await import('../db/repositories/jobs.repo.js');
-  // Idempotent hourly key keeps queue small while still processing new reminders
   const hourKey = new Date().toISOString().slice(0, 13);
   jobsRepo.create({
     type: 'reminder',
     payload_ref: JSON.stringify({ groupId: ctx.group.id }),
     idempotency_key: `job:reminder:sweep:${hourKey}`,
   });
+}
+
+export async function sendOnboarding(sock: WASocket, groupJid: string): Promise<void> {
+  await sendMessage(sock, groupJid, ONBOARDING);
 }
