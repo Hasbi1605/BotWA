@@ -3,6 +3,8 @@ import {
   normalizePhoneDigits,
   parsePhoneNameDirectory,
   phoneDigitsFromJid,
+  isLikelyLid,
+  phonesFromParticipant,
 } from '../src/db/repositories/name-map.repo.js';
 
 describe('name map phone parsing', () => {
@@ -12,9 +14,19 @@ describe('name map phone parsing', () => {
     expect(normalizePhoneDigits('6282136928559')).toBe('6282136928559');
   });
 
-  it('extracts phone from jid', () => {
+  it('extracts phone from jid and rejects pure LID', () => {
     expect(phoneDigitsFromJid('6287838866063:3@s.whatsapp.net')).toBe('6287838866063');
     expect(phoneDigitsFromJid('6287838866063@s.whatsapp.net')).toBe('6287838866063');
+    expect(isLikelyLid('143766145003610:3@lid')).toBe(true);
+    expect(phoneDigitsFromJid('143766145003610@lid')).toBe(null);
+  });
+
+  it('pulls phones from participant metadata fields', () => {
+    const phones = phonesFromParticipant({
+      id: '999999999999999@lid',
+      phoneNumber: '6282136928559@s.whatsapp.net',
+    });
+    expect(phones).toContain('6282136928559');
   });
 
   it('parses multi-line directory', () => {
@@ -31,6 +43,7 @@ describe('name map phone parsing', () => {
     const pairs = parsePhoneNameDirectory(text);
     expect(pairs).toHaveLength(8);
     expect(pairs.find((p) => p.name === 'Acel')?.phone).toBe('6287838866063');
+    expect(pairs.find((p) => p.name === 'Danu')?.phone).toBe('6282136928559');
     expect(pairs.find((p) => p.name === 'Tio')?.phone).toBe('6285181758446');
   });
 });

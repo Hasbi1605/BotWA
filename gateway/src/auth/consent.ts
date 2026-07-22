@@ -40,6 +40,12 @@ export async function handleActivationConfirm(
   group: Group
 ): Promise<void> {
   setActivated(group.id);
+  try {
+    const nameMap = await import('../db/repositories/name-map.repo.js');
+    nameMap.seedDefaultDirectory(group.id);
+  } catch {
+    /* non-fatal */
+  }
   await sendMessage(
     sock,
     groupJid,
@@ -104,8 +110,10 @@ export async function handleDeleteData(
     }
     try {
       db.prepare('DELETE FROM group_name_map WHERE group_id = ?').run(group.id);
+      db.prepare('DELETE FROM group_name_aliases WHERE group_id = ?').run(group.id);
+      db.prepare('DELETE FROM group_lid_map WHERE group_id = ?').run(group.id);
     } catch {
-      /* optional table */
+      /* optional tables */
     }
     updateStatus(group.id, 'inactive');
     await sendMessage(sock, groupJid, '🗑️ Data grup sudah dihapus. Bot dimatikan untuk grup ini.');

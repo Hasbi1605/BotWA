@@ -76,19 +76,19 @@ export async function handleMessage(
     '';
   const senderHmac = hmacJid(senderJid, config.hmacSecret, config.hmacKeyVersion);
 
-  // Admin role (LID-aware) + optional phoneNumber for LID users
+  // Admin role (LID-aware) + phones for name directory
   let senderRole = 'member';
-  let participantPhone: string | undefined;
+  let extraPhones: string[] = [];
   try {
     const groupMeta = await sock.groupMetadata(groupJid);
-    const p = findParticipant(groupMeta, senderJid) as
-      | (import('@whiskeysockets/baileys').GroupParticipant & { phoneNumber?: string })
-      | undefined;
+    const p = findParticipant(groupMeta, senderJid) as any;
     senderRole = roleFromParticipant(p);
     if (senderRole === 'member') {
       senderRole = await checkAdminStatus(sock, groupJid, senderJid);
     }
-    participantPhone = p?.phoneNumber;
+
+    const nameMapEarly = await import('../db/repositories/name-map.repo.js');
+    extraPhones = nameMapEarly.phonesFromParticipant(p);
 
     if (!group.name && groupMeta.subject) {
       const db = (await import('../db/index.js')).getDb(config.dbPath);
@@ -100,18 +100,17 @@ export async function handleMessage(
   }
 
   const pushName = msg.pushName || '';
-  // Prefer admin phone→name directory over WA pushName / bare numbers
   const nameMap = await import('../db/repositories/name-map.repo.js');
-  let displayName = nameMap.resolveDisplayName(group.id, senderJid, pushName);
-  if (participantPhone) {
-    const byPn =
-      nameMap.lookupByJid(group.id, participantPhone) ||
-      nameMap.lookupByPhone(
-        group.id,
-        nameMap.phoneDigitsFromJid(participantPhone) || participantPhone
-      );
-    if (byPn) displayName = byPn;
+  // Ensure default directory exists (idempotent) for pilot groups
+  if (nameMap.listByGroup(group.id).length === 0) {
+    nameMap.seedDefaultDirectory(group.id);
   }
+  const displayName = nameMap.resolveDisplayName(
+    group.id,
+    senderJid,
+    pushName,
+    extraPhones
+  );
 
   const participant = participantsRepo.findOrCreate(
     group.id,

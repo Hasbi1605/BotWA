@@ -312,8 +312,9 @@ async function handleMemoryAdd(ctx: CommandContext): Promise<void> {
   const pairs = nameMap.parsePhoneNameDirectory(body);
   if (pairs.length > 0) {
     const n = nameMap.upsertMany(ctx.group.id, pairs);
-    // Also pin name-only facts for LC memory (no phone numbers in content)
     for (const p of pairs) {
+      nameMap.upsertNickname(ctx.group.id, p.name, p.name);
+      nameMap.upsertNickname(ctx.group.id, `${p.name} KKN`, p.name);
       const key =
         'name_' +
         p.name
@@ -335,7 +336,7 @@ async function handleMemoryAdd(ctx: CommandContext): Promise<void> {
       ctx.sock,
       ctx.group.jid,
       `📌 *Direktori nama* tersimpan (${n} orang):\n${names}\n\n` +
-        `_Nomor dipakai internal agar bot tahu siapa yang chat; di balasan bot pakai *nama*._`
+        `_Nomor hanya internal; bot pakai *nama* di ringkasan/konteks._`
     );
     return;
   }

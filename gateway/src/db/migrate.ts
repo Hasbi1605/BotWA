@@ -408,4 +408,30 @@ const migrations = [
       CREATE INDEX idx_group_name_map_phone ON group_name_map(group_id, phone_digits);
     `,
   },
+  {
+    name: '019_name_aliases_and_lid_map',
+    sql: `
+      CREATE TABLE group_name_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        alias_key TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(group_id, alias_key)
+      );
+      CREATE INDEX idx_group_name_aliases_group ON group_name_aliases(group_id);
+
+      CREATE TABLE group_lid_map (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        lid_core TEXT NOT NULL,
+        phone_digits TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(group_id, lid_core)
+      );
+      CREATE INDEX idx_group_lid_map_group ON group_lid_map(group_id);
+    `,
+  },
 ];

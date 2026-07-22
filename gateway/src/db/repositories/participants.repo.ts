@@ -18,12 +18,18 @@ export function findOrCreate(groupId: number, jidHmac: string, keyVersion: numbe
   ).get(groupId, jidHmac) as Participant | undefined;
 
   if (existing) {
-    if (displayName && displayName !== existing.display_name) {
+    // Always prefer a non-empty resolved name (directory wins over stale "Sibuk"/number)
+    const next = (displayName || existing.display_name || '').trim();
+    if (next && next !== existing.display_name) {
       db.prepare(
         'UPDATE participants SET display_name = ?, last_seen_at = datetime(\'now\') WHERE id = ?'
-      ).run(displayName, existing.id);
+      ).run(next, existing.id);
+      return { ...existing, display_name: next };
     }
-    return { ...existing, display_name: displayName || existing.display_name };
+    db.prepare(
+      'UPDATE participants SET last_seen_at = datetime(\'now\') WHERE id = ?'
+    ).run(existing.id);
+    return { ...existing, display_name: next || existing.display_name };
   }
 
   const result = db.prepare(
