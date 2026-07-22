@@ -392,4 +392,20 @@ const migrations = [
       CREATE INDEX idx_jobs_run_after ON jobs(run_after);
     `,
   },
+  {
+    name: '018_group_name_map',
+    sql: `
+      CREATE TABLE group_name_map (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        phone_digits TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(group_id, phone_digits)
+      );
+      CREATE INDEX idx_group_name_map_group ON group_name_map(group_id);
+      CREATE INDEX idx_group_name_map_phone ON group_name_map(group_id, phone_digits);
+    `,
+  },
 ];

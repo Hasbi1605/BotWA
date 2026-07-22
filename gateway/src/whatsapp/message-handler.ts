@@ -76,15 +76,19 @@ export async function handleMessage(
     '';
   const senderHmac = hmacJid(senderJid, config.hmacSecret, config.hmacKeyVersion);
 
-  // Admin role (LID-aware)
+  // Admin role (LID-aware) + optional phoneNumber for LID users
   let senderRole = 'member';
+  let participantPhone: string | undefined;
   try {
     const groupMeta = await sock.groupMetadata(groupJid);
-    senderRole = roleFromParticipant(findParticipant(groupMeta, senderJid));
-    // Fallback via dedicated helper if empty
+    const p = findParticipant(groupMeta, senderJid) as
+      | (import('@whiskeysockets/baileys').GroupParticipant & { phoneNumber?: string })
+      | undefined;
+    senderRole = roleFromParticipant(p);
     if (senderRole === 'member') {
       senderRole = await checkAdminStatus(sock, groupJid, senderJid);
     }
+    participantPhone = p?.phoneNumber;
 
     if (!group.name && groupMeta.subject) {
       const db = (await import('../db/index.js')).getDb(config.dbPath);
@@ -96,11 +100,24 @@ export async function handleMessage(
   }
 
   const pushName = msg.pushName || '';
+  // Prefer admin phone→name directory over WA pushName / bare numbers
+  const nameMap = await import('../db/repositories/name-map.repo.js');
+  let displayName = nameMap.resolveDisplayName(group.id, senderJid, pushName);
+  if (participantPhone) {
+    const byPn =
+      nameMap.lookupByJid(group.id, participantPhone) ||
+      nameMap.lookupByPhone(
+        group.id,
+        nameMap.phoneDigitsFromJid(participantPhone) || participantPhone
+      );
+    if (byPn) displayName = byPn;
+  }
+
   const participant = participantsRepo.findOrCreate(
     group.id,
     senderHmac,
     config.hmacKeyVersion,
-    pushName
+    displayName
   );
   if (participant.current_role !== senderRole) {
     participantsRepo.updateRole(participant.id, senderRole);

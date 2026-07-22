@@ -240,23 +240,39 @@ async function handleLc(ctx: CommandContext, on: boolean): Promise<void> {
 
 async function handleMemoryStatus(ctx: CommandContext): Promise<void> {
   const memoryRepo = await import('../db/repositories/memory.repo.js');
-  const rows = memoryRepo.listByGroup(ctx.group.id, 15);
+  const nameMap = await import('../db/repositories/name-map.repo.js');
+  const rows = memoryRepo.listByGroup(ctx.group.id, 12);
   const total = memoryRepo.countByGroup(ctx.group.id);
-  if (total === 0) {
+  const names = nameMap.listByGroup(ctx.group.id);
+
+  if (total === 0 && names.length === 0) {
     await sendMessage(
       ctx.sock,
       ctx.group.jid,
-      '🧠 *Memori grup*\n\nBelum ada yang tersimpan.\nBot belajar otomatis dari chat (setelah ringkasan / malam hari), atau admin: *ingat: SCH = titik kumpul*'
+      '🧠 *Memori grup*\n\nBelum ada yang tersimpan.\n' +
+        '• Fakta: *ingat: SCH = titik kumpul*\n' +
+        '• Nama anggota (multi-baris):\n*ingat:*\n+62 8xx = Acel'
     );
     return;
   }
-  const lines = [`🧠 *Memori grup* (${total} item)`, ''];
-  for (const r of rows) {
-    const pin = r.pinned ? '📌' : '•';
-    lines.push(`${pin} _${r.kind}_ *${r.mem_key}*: ${r.content}`);
+
+  const lines: string[] = [];
+  if (names.length) {
+    lines.push(`👥 *Direktori nama* (${names.length})`);
+    for (const n of names) {
+      lines.push(`• ${n.display_name}`);
+    }
+    lines.push('');
   }
-  if (total > rows.length) {
-    lines.push('', `_…+${total - rows.length} lagi_`);
+  lines.push(`🧠 *Fakta memori* (${total} item)`);
+  if (rows.length === 0) {
+    lines.push('_Belum ada fakta otomatis/pinned._');
+  } else {
+    for (const r of rows) {
+      const pin = r.pinned ? '📌' : '•';
+      lines.push(`${pin} _${r.kind}_ *${r.mem_key}*: ${r.content}`);
+    }
+    if (total > rows.length) lines.push(`_…+${total - rows.length} lagi_`);
   }
   lines.push('', 'Reset: *memori reset* · Tambah: *ingat: …*');
   await sendMessage(ctx.sock, ctx.group.jid, lines.join('\n'));
@@ -274,6 +290,7 @@ async function handleMemoryReset(ctx: CommandContext): Promise<void> {
 
 async function handleMemoryAdd(ctx: CommandContext): Promise<void> {
   const memoryRepo = await import('../db/repositories/memory.repo.js');
+  const nameMap = await import('../db/repositories/name-map.repo.js');
   const raw = ctx.normalized.content.trim();
   // ingat: text | ingat text | memori tambah text
   let body = raw
@@ -284,19 +301,54 @@ async function handleMemoryAdd(ctx: CommandContext): Promise<void> {
     await sendMessage(
       ctx.sock,
       ctx.group.jid,
-      'Contoh:\n*ingat: Acel sering urus kas*\n*ingat: SCH = titik kumpul survei*'
+      'Contoh:\n*ingat: Acel sering urus kas*\n*ingat: SCH = titik kumpul*\n\n' +
+        'Daftar nama (boleh banyak baris):\n' +
+        '*ingat:*\n+62 8xx… = Acel\n+62 8xx… = Danu'
     );
     return;
   }
-  // key from first phrase
+
+  // Multi-line phone → name directory
+  const pairs = nameMap.parsePhoneNameDirectory(body);
+  if (pairs.length > 0) {
+    const n = nameMap.upsertMany(ctx.group.id, pairs);
+    // Also pin name-only facts for LC memory (no phone numbers in content)
+    for (const p of pairs) {
+      const key =
+        'name_' +
+        p.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_|_$/g, '')
+          .slice(0, 40);
+      memoryRepo.upsert({
+        group_id: ctx.group.id,
+        kind: 'alias',
+        mem_key: key || `name_${Date.now()}`,
+        content: `Anggota bernama ${p.name}`,
+        confidence: 0.98,
+        pinned: true,
+      });
+    }
+    const names = pairs.map((p) => p.name).join(', ');
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      `📌 *Direktori nama* tersimpan (${n} orang):\n${names}\n\n` +
+        `_Nomor dipakai internal agar bot tahu siapa yang chat; di balasan bot pakai *nama*._`
+    );
+    return;
+  }
+
+  // Free-text fact
   const keyPart = body.split(/[=:]/)[0].trim().slice(0, 40);
   const memKey =
     'admin_' +
-    keyPart
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_|_$/g, '')
-      .slice(0, 40) || `admin_${Date.now()}`;
+      keyPart
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '')
+        .slice(0, 40) || `admin_${Date.now()}`;
   memoryRepo.upsert({
     group_id: ctx.group.id,
     kind: 'admin',

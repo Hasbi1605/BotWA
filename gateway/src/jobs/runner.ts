@@ -126,7 +126,13 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
   }
 
   const mode = (group.summary_mode === 'roast' ? 'roast' : 'normal') as 'normal' | 'roast';
-  const memoryBlock = memoryRepo.formatForPrompt(summary.group_id);
+  const nameMap = await import('../db/repositories/name-map.repo.js');
+  const memoryBlock = [
+    memoryRepo.formatForPrompt(summary.group_id),
+    nameMap.formatDirectoryForPrompt(summary.group_id),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   // Call worker
   const result = await callWorkerSummary({
@@ -136,7 +142,7 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
     memory_block: memoryBlock || undefined,
     messages: messages.map(m => ({
       id: m.id,
-      content: m.content,
+      content: nameMap.replacePhonesWithNames(summary.group_id, m.content || ''),
       sender_name: (m as any).display_name || 'Unknown',
       timestamp: m.timestamp,
       reply_to: m.reply_to,
@@ -388,15 +394,27 @@ async function processChatReplyJob(job: jobsRepo.Job, config: Config): Promise<v
     content: m.content || '',
   }));
 
-  const memoryBlock = memoryRepo.formatForPrompt(group.id);
+  const nameMap = await import('../db/repositories/name-map.repo.js');
+  const memoryParts = [
+    memoryRepo.formatForPrompt(group.id),
+    nameMap.formatDirectoryForPrompt(group.id),
+  ].filter(Boolean);
+  const memoryBlock = memoryParts.join('\n\n');
+
+  // Prefer directory names in recent context + strip bare phones in the trigger message
+  const recentNamed = recent.map((m) => ({
+    ...m,
+    content: nameMap.replacePhonesWithNames(group.id, m.content),
+  }));
+  const messageClean = nameMap.replacePhonesWithNames(group.id, msg.content);
 
   const result = await callWorkerChatLc(
     {
       group_id: group.id,
       group_name: group.name || '',
       sender_name: payload.senderName || 'Anggota',
-      message: msg.content,
-      recent,
+      message: messageClean,
+      recent: recentNamed,
       memory_block: memoryBlock || undefined,
     },
     config

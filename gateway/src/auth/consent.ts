@@ -102,6 +102,11 @@ export async function handleDeleteData(
     } catch {
       /* table may not exist on very old DB mid-migrate */
     }
+    try {
+      db.prepare('DELETE FROM group_name_map WHERE group_id = ?').run(group.id);
+    } catch {
+      /* optional table */
+    }
     updateStatus(group.id, 'inactive');
     await sendMessage(sock, groupJid, '🗑️ Data grup sudah dihapus. Bot dimatikan untuk grup ini.');
     return;
