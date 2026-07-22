@@ -89,7 +89,8 @@ class SummaryService:
             return SummaryResult(output=empty, model_route="none")
 
         # Build context for AI
-        context = self._build_context(processed, request.window)
+        memory_block = (getattr(request, "memory_block", None) or "").strip()
+        context = self._build_context(processed, request.window, memory_block)
         mode = (getattr(request, "mode", None) or "normal").lower()
         system_prompt = SUMMARY_SYSTEM_PROMPT
         if mode == "roast":
@@ -152,16 +153,24 @@ class SummaryService:
             "participant_count": processed.participant_count,
         }
 
-    def _build_context(self, processed, window: dict) -> str:
+    def _build_context(self, processed, window: dict, memory_block: str = "") -> str:
         lines = [
             f"Periode: {window['start']} sampai {window['end']}",
             f"Jumlah pesan: {processed.stats['total']}",
             f"Jumlah pesan (setelah filter): {processed.stats['text']}",
             f"Jumlah peserta: {processed.participant_count}",
-            "",
-            "Percakapan:",
-            processed.to_prompt_context(),
         ]
+        if memory_block:
+            lines.extend(
+                [
+                    "",
+                    memory_block,
+                    "",
+                    "Pakai memori hanya untuk nama/kebiasaan/fakta grup yang relevan; "
+                    "evidence ringkasan tetap dari percakapan window ini.",
+                ]
+            )
+        lines.extend(["", "Percakapan:", processed.to_prompt_context()])
         return "\n".join(lines)
 
 

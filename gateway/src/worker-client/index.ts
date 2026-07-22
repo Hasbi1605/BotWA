@@ -7,6 +7,7 @@ interface SummaryRequest {
   group_id: number;
   window: { start: string; end: string };
   mode?: 'normal' | 'roast';
+  memory_block?: string;
   messages: Array<{
     id: number;
     content: string;
@@ -81,6 +82,7 @@ interface ChatLcRequest {
   sender_name: string;
   message: string;
   recent: Array<{ sender_name: string; content: string }>;
+  memory_block?: string;
 }
 
 interface ChatLcResponse {
@@ -91,6 +93,37 @@ interface ChatLcResponse {
 
 export async function callWorkerChatLc(req: ChatLcRequest, config: any): Promise<ChatLcResponse> {
   return callWorker('/api/v1/chat/lc', req, config, 45_000);
+}
+
+interface MemoryConsolidateRequest {
+  group_id: number;
+  group_name: string;
+  existing: Array<{
+    kind: string;
+    mem_key: string;
+    content: string;
+    confidence: number;
+  }>;
+  messages: Array<{ sender_name: string; content: string }>;
+}
+
+interface MemoryConsolidateResponse {
+  status: string;
+  items?: Array<{
+    kind: string;
+    mem_key: string;
+    content: string;
+    confidence: number;
+    action?: string;
+  }>;
+  error?: string;
+}
+
+export async function callWorkerMemoryConsolidate(
+  req: MemoryConsolidateRequest,
+  config: any
+): Promise<MemoryConsolidateResponse> {
+  return callWorker('/api/v1/memory/consolidate', req, config, 60_000);
 }
 
 async function callWorker<T>(path: string, body: any, config: any, timeoutMs: number): Promise<T> {

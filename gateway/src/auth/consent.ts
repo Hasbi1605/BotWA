@@ -97,6 +97,11 @@ export async function handleDeleteData(
       'DELETE FROM reminders WHERE schedule_id IN (SELECT id FROM schedules WHERE group_id = ?)'
     ).run(group.id);
     db.prepare('DELETE FROM schedules WHERE group_id = ?').run(group.id);
+    try {
+      db.prepare('DELETE FROM group_memories WHERE group_id = ?').run(group.id);
+    } catch {
+      /* table may not exist on very old DB mid-migrate */
+    }
     updateStatus(group.id, 'inactive');
     await sendMessage(sock, groupJid, '🗑️ Data grup sudah dihapus. Bot dimatikan untuk grup ini.');
     return;

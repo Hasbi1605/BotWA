@@ -30,6 +30,9 @@ describe('command parser (natural Indonesian)', () => {
     expect(parseIntent('lc mati').name).toBe('lc_off');
     expect(parseIntent('mode lc').name).toBe('lc_on');
     expect(parseIntent('mode silent').name).toBe('lc_off');
+    expect(parseIntent('memori').name).toBe('memory_status');
+    expect(parseIntent('memori reset').name).toBe('memory_reset');
+    expect(parseIntent('ingat: SCH titik kumpul').name).toBe('memory_add');
   });
 
   it('does not treat normal chat as commands', () => {

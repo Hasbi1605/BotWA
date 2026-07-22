@@ -16,6 +16,7 @@ class SummaryRequest(BaseModel):
     window: dict  # {start: ISO-8601, end: ISO-8601}
     messages: list[MessageInput]
     mode: str = "normal"  # normal | roast
+    memory_block: str = ""
 
 
 class DocumentInput(BaseModel):

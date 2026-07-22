@@ -20,6 +20,7 @@ class ChatLcRequest(BaseModel):
     sender_name: str = ""
     message: str
     recent: list[ChatMessage] = Field(default_factory=list)
+    memory_block: str = ""
 
 
 @router.post("/chat/lc")
@@ -40,5 +41,6 @@ async def chat_lc(
         sender_name=request.sender_name,
         message=request.message,
         recent=[m.model_dump() for m in request.recent],
+        memory_block=request.memory_block or "",
     )
     return {"status": "ok", "reply": text}

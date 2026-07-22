@@ -38,13 +38,16 @@ Anggota biasanya *tidak* perlu perintah.
 
 • *aktifkan bot* → *YA* — nyalakan (+ privasi)
 • *mode normal* / *mode roast* — gaya *ringkasan* 2× sehari
-• *lc on* / *lc off* — *Loss Control*: bot balas *semua* chat (lucu/roast, semua anggota)
+• *lc on* / *lc off* — *Loss Control*: bot balas *semua* chat (lucu/roast)
+• *memori* — lihat apa yang bot ingat tentang grup
+• *ingat: …* — simpan fakta manual (pinned)
+• *memori reset* — hapus memori (kecuali yang di-pin admin)
 • *ringkas* — ringkasan sekarang (opsional)
 • *jadwal* — lihat / *jadwal batal 1*
 • *jeda* / *lanjut* / *status*
 • *hapus data* → *YA*
 
-_Mode ringkasan_ (normal/roast) *terpisah* dari _LC_ (balas chat).`;
+_Ringkasan_ (normal/roast) · _LC_ (balas chat) · _Memori_ (belajar grup) terpisah.`;
 
 export async function handleCommand(ctx: CommandContext): Promise<void> {
   const { sock } = ctx;
@@ -123,6 +126,15 @@ export async function handleCommand(ctx: CommandContext): Promise<void> {
       break;
     case 'lc_off':
       await handleLc(ctx, false);
+      break;
+    case 'memory_status':
+      await handleMemoryStatus(ctx);
+      break;
+    case 'memory_reset':
+      await handleMemoryReset(ctx);
+      break;
+    case 'memory_add':
+      await handleMemoryAdd(ctx);
       break;
     case 'pause':
       await handlePause(sock, groupJid, ctx.group);
@@ -214,7 +226,7 @@ async function handleLc(ctx: CommandContext, on: boolean): Promise<void> {
       ctx.group.jid,
       `🔥 *Loss Control (LC) ON*\n\n` +
         `Bot akan *membalas chat grup* (bukan cuma admin/command) — gaya helpful, lucu, sedikit roasting.\n` +
-        `Tidak perlu tag bot.\n\n` +
+        `Tidak perlu tag bot. Memori grup dipakai biar makin kenal.\n\n` +
         `_Rate-limit aktif biar tidak banjir._ Matikan: *lc off*`
     );
   } else {
@@ -224,6 +236,76 @@ async function handleLc(ctx: CommandContext, on: boolean): Promise<void> {
       `🤫 *LC OFF* — bot kembali diam di chat biasa.\nRingkasan otomatis & PDF tetap jalan.\nNyalakan lagi: *lc on*`
     );
   }
+}
+
+async function handleMemoryStatus(ctx: CommandContext): Promise<void> {
+  const memoryRepo = await import('../db/repositories/memory.repo.js');
+  const rows = memoryRepo.listByGroup(ctx.group.id, 15);
+  const total = memoryRepo.countByGroup(ctx.group.id);
+  if (total === 0) {
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      '🧠 *Memori grup*\n\nBelum ada yang tersimpan.\nBot belajar otomatis dari chat (setelah ringkasan / malam hari), atau admin: *ingat: SCH = titik kumpul*'
+    );
+    return;
+  }
+  const lines = [`🧠 *Memori grup* (${total} item)`, ''];
+  for (const r of rows) {
+    const pin = r.pinned ? '📌' : '•';
+    lines.push(`${pin} _${r.kind}_ *${r.mem_key}*: ${r.content}`);
+  }
+  if (total > rows.length) {
+    lines.push('', `_…+${total - rows.length} lagi_`);
+  }
+  lines.push('', 'Reset: *memori reset* · Tambah: *ingat: …*');
+  await sendMessage(ctx.sock, ctx.group.jid, lines.join('\n'));
+}
+
+async function handleMemoryReset(ctx: CommandContext): Promise<void> {
+  const memoryRepo = await import('../db/repositories/memory.repo.js');
+  const removed = memoryRepo.clearGroup(ctx.group.id, { keepPinned: true });
+  await sendMessage(
+    ctx.sock,
+    ctx.group.jid,
+    `🧹 Memori grup dibersihkan (${removed} item).\nFakta yang di-pin admin (*ingat:*) tetap disimpan.`
+  );
+}
+
+async function handleMemoryAdd(ctx: CommandContext): Promise<void> {
+  const memoryRepo = await import('../db/repositories/memory.repo.js');
+  const raw = ctx.normalized.content.trim();
+  // ingat: text | ingat text | memori tambah text
+  let body = raw
+    .replace(/^\.?ingat\s*:?\s*/i, '')
+    .replace(/^\.?(memori|memory)\s+(tambah|add|ingat)\s*:?\s*/i, '')
+    .trim();
+  if (!body || body.length < 3) {
+    await sendMessage(
+      ctx.sock,
+      ctx.group.jid,
+      'Contoh:\n*ingat: Acel sering urus kas*\n*ingat: SCH = titik kumpul survei*'
+    );
+    return;
+  }
+  // key from first phrase
+  const keyPart = body.split(/[=:]/)[0].trim().slice(0, 40);
+  const memKey =
+    'admin_' +
+    keyPart
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_|_$/g, '')
+      .slice(0, 40) || `admin_${Date.now()}`;
+  memoryRepo.upsert({
+    group_id: ctx.group.id,
+    kind: 'admin',
+    mem_key: memKey || `admin_${Date.now()}`,
+    content: body.slice(0, 500),
+    confidence: 0.95,
+    pinned: true,
+  });
+  await sendMessage(ctx.sock, ctx.group.jid, `📌 Diingat: _${body.slice(0, 200)}_`);
 }
 
 async function handlePendingReply(

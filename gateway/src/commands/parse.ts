@@ -15,6 +15,9 @@ export type IntentName =
   | 'mode_roast'
   | 'lc_on'
   | 'lc_off'
+  | 'memory_status'
+  | 'memory_reset'
+  | 'memory_add'
   | 'pause'
   | 'resume'
   | 'delete_data'
@@ -65,6 +68,8 @@ export function looksLikeCommand(text: string): boolean {
     /^(mode)(\s+(normal|roast|lc|silent|diam))?$/,
     /^(lc)(\s+(on|off|nyala|mati|aktif|hidup|stop))?$/,
     /^(loss\s*control|los\s*control)(\s+(on|off|nyala|mati))?$/,
+    /^(memori|memory)(\s|$)/,
+    /^(ingat)(\s|:|$)/,
     /^(jeda|pause|istirahat)$/,
     /^(lanjut(kan)?|resume|hidupkan)$/,
     /^(hapus\s*data|hapusdata)$/,
@@ -105,6 +110,11 @@ export function parseIntent(text: string): ParsedIntent {
         return parseModeArgs(args, raw);
       case 'lc':
         return parseLcArgs(args, raw);
+      case 'memori':
+      case 'memory':
+        return parseMemoryArgs(args, raw);
+      case 'ingat':
+        return { name: 'memory_add', args, raw };
       case 'pause':
       case 'jeda':
         return { name: 'pause', args, raw };
@@ -159,6 +169,14 @@ export function parseIntent(text: string): ParsedIntent {
     const args = rest ? rest.split(/\s+/) : [];
     return parseLcArgs(args, raw);
   }
+  if (/^(memori|memory)\b/.test(t)) {
+    const rest = t.replace(/^(memori|memory)\s*/, '');
+    const args = rest ? rest.split(/\s+/) : [];
+    return parseMemoryArgs(args, raw);
+  }
+  if (/^ingat\b/.test(t) || /^ingat\s*:/.test(t)) {
+    return { name: 'memory_add', args: [], raw };
+  }
   if (/^(jeda|pause|istirahat)$/.test(t)) {
     return { name: 'pause', args: [], raw };
   }
@@ -208,6 +226,17 @@ function parseLcArgs(args: string[], raw: string): ParsedIntent {
     return { name: 'lc_off', args, raw };
   }
   return { name: 'lc_on', args, raw };
+}
+
+function parseMemoryArgs(args: string[], raw: string): ParsedIntent {
+  const sub = (args[0] || '').toLowerCase();
+  if (['reset', 'hapus', 'clear', 'kosongkan'].includes(sub)) {
+    return { name: 'memory_reset', args: args.slice(1), raw };
+  }
+  if (['tambah', 'add', 'ingat'].includes(sub)) {
+    return { name: 'memory_add', args: args.slice(1), raw };
+  }
+  return { name: 'memory_status', args, raw };
 }
 
 function parseScheduleArgs(args: string[], raw: string): ParsedIntent {

@@ -12,6 +12,7 @@ const logger = pino({ name: 'scheduler' });
 let morningTask: ScheduledTask | null = null;
 let eveningTask: ScheduledTask | null = null;
 let reminderTask: ScheduledTask | null = null;
+let memoryTask: ScheduledTask | null = null;
 
 export function startScheduler(config: Config): void {
   const tz = config.summaryTimezone;
@@ -35,6 +36,11 @@ export function startScheduler(config: Config): void {
     });
   }, { timezone: tz });
 
+  // Nightly memory consolidate for all active groups (21:30 WIB)
+  memoryTask = cron.schedule('30 21 * * *', () => {
+    enqueueMemoryConsolidateAll();
+  }, { timezone: tz });
+
   logger.info({ morning: config.summaryCronMorning, evening: config.summaryCronEvening, tz }, 'Scheduler started');
 }
 
@@ -42,7 +48,21 @@ export function stopScheduler(): void {
   morningTask?.stop();
   eveningTask?.stop();
   reminderTask?.stop();
+  memoryTask?.stop();
   logger.info('Scheduler stopped');
+}
+
+function enqueueMemoryConsolidateAll(): void {
+  const activeGroups = groupsRepo.listActive();
+  const dayKey = DateTime.now().setZone('Asia/Jakarta').toISODate();
+  for (const group of activeGroups) {
+    jobsRepo.create({
+      type: 'memory_consolidate',
+      payload_ref: JSON.stringify({ groupId: group.id }),
+      idempotency_key: `job:memory_consolidate:nightly:${group.id}:${dayKey}`,
+    });
+  }
+  logger.info({ groups: activeGroups.length }, 'Nightly memory consolidate enqueued');
 }
 
 function createSummaryWindows(period: 'morning' | 'evening', tz: string): void {

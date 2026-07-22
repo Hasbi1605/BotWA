@@ -9,7 +9,9 @@ import {
   callWorkerPdfAnalyze,
   callWorkerScheduleDetect,
   callWorkerChatLc,
+  callWorkerMemoryConsolidate,
 } from '../worker-client/index.js';
+import * as memoryRepo from '../db/repositories/memory.repo.js';
 import { sendMessage } from '../whatsapp/outbound.js';
 import { getSocket } from '../whatsapp/connection.js';
 import * as groupsRepo from '../db/repositories/groups.repo.js';
@@ -74,6 +76,9 @@ async function processNextJob(config: Config): Promise<void> {
       case 'chat_reply':
         await processChatReplyJob(jobWithAttempts, config);
         break;
+      case 'memory_consolidate':
+        await processMemoryConsolidateJob(jobWithAttempts, config);
+        break;
       case 'retention': {
         const { runRetentionCleanup } = await import('../security/retention.js');
         await runRetentionCleanup(config);
@@ -121,12 +126,14 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
   }
 
   const mode = (group.summary_mode === 'roast' ? 'roast' : 'normal') as 'normal' | 'roast';
+  const memoryBlock = memoryRepo.formatForPrompt(summary.group_id);
 
   // Call worker
   const result = await callWorkerSummary({
     group_id: summary.group_id,
     window: { start: summary.start_at, end: summary.end_at },
     mode,
+    memory_block: memoryBlock || undefined,
     messages: messages.map(m => ({
       id: m.id,
       content: m.content,
@@ -167,6 +174,17 @@ async function processSummaryJob(job: jobsRepo.Job, config: Config): Promise<voi
         endAt: summary.end_at,
       }),
       idempotency_key: `job:schedule_detect:${summary.id}`,
+    });
+
+    // Learn from this window's chat into long-term group memory
+    jobsRepo.create({
+      type: 'memory_consolidate',
+      payload_ref: JSON.stringify({
+        groupId: summary.group_id,
+        startAt: summary.start_at,
+        endAt: summary.end_at,
+      }),
+      idempotency_key: `job:memory_consolidate:summary:${summary.id}`,
     });
 
     // Send to group
@@ -370,6 +388,8 @@ async function processChatReplyJob(job: jobsRepo.Job, config: Config): Promise<v
     content: m.content || '',
   }));
 
+  const memoryBlock = memoryRepo.formatForPrompt(group.id);
+
   const result = await callWorkerChatLc(
     {
       group_id: group.id,
@@ -377,6 +397,7 @@ async function processChatReplyJob(job: jobsRepo.Job, config: Config): Promise<v
       sender_name: payload.senderName || 'Anggota',
       message: msg.content,
       recent,
+      memory_block: memoryBlock || undefined,
     },
     config
   );
@@ -388,6 +409,62 @@ async function processChatReplyJob(job: jobsRepo.Job, config: Config): Promise<v
   const sock = getSocket();
   if (!sock) throw new Error('No WhatsApp socket');
   await sendMessage(sock, group.jid, result.reply.trim());
+}
+
+async function processMemoryConsolidateJob(job: jobsRepo.Job, config: Config): Promise<void> {
+  const payload = JSON.parse(job.payload_ref) as {
+    groupId: number;
+    startAt?: string;
+    endAt?: string;
+  };
+  const group = groupsRepo.findById(payload.groupId);
+  if (!group || group.status === 'inactive') return;
+
+  let messages: Array<{ sender_name: string; content: string }>;
+  if (payload.startAt && payload.endAt) {
+    messages = messagesRepo
+      .findByGroupAndTimeRange(group.id, payload.startAt, payload.endAt)
+      .map((m) => ({
+        sender_name: (m as any).display_name || 'Anggota',
+        content: m.content || '',
+      }));
+  } else {
+    messages = messagesRepo.findRecentByGroup(group.id, 80).map((m) => ({
+      sender_name: (m as any).display_name || 'Anggota',
+      content: m.content || '',
+    }));
+  }
+
+  // Need some chat signal
+  const withText = messages.filter((m) => m.content.trim().length > 1);
+  if (withText.length < 3) {
+    logger.info({ groupId: group.id }, 'Skip memory consolidate — too few messages');
+    return;
+  }
+
+  const existing = memoryRepo.listByGroup(group.id, 40).map((m) => ({
+    kind: m.kind,
+    mem_key: m.mem_key,
+    content: m.content,
+    confidence: m.confidence,
+  }));
+
+  const result = await callWorkerMemoryConsolidate(
+    {
+      group_id: group.id,
+      group_name: group.name || '',
+      existing,
+      messages: withText,
+    },
+    config
+  );
+
+  if (result.status !== 'ok' || !Array.isArray(result.items)) {
+    throw new Error(result.error || 'Memory consolidate failed');
+  }
+
+  const stats = memoryRepo.applyConsolidateResult(group.id, result.items);
+  logger.info({ groupId: group.id, ...stats }, 'Group memory updated');
 }
 
 

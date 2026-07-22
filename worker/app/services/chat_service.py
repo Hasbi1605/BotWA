@@ -45,13 +45,22 @@ class ChatService:
         sender_name: str,
         message: str,
         recent: list[dict],
+        memory_block: str = "",
     ) -> str:
         lines = [
             f"Grup: {group_name or 'WhatsApp'}",
             f"Pengirim sekarang: {sender_name or 'Anggota'}",
             "",
-            "Konteks chat terbaru (lama → baru):",
         ]
+        if memory_block and memory_block.strip():
+            lines.append(memory_block.strip())
+            lines.append("")
+            lines.append(
+                "Pakai memori di atas untuk panggilan/kebiasaan/fakta grup. "
+                "Jangan sebut 'menurut memori'. Jangan mengarang di luar memori+chat."
+            )
+            lines.append("")
+        lines.append("Konteks chat terbaru (lama → baru):")
         for m in recent[-16:]:
             who = m.get("sender_name") or "Anggota"
             body = (m.get("content") or "").strip().replace("\n", " ")

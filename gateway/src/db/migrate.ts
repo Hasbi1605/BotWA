@@ -333,4 +333,63 @@ const migrations = [
       CREATE INDEX idx_jobs_run_after ON jobs(run_after);
     `,
   },
+  {
+    name: '016_group_memories',
+    sql: `
+      CREATE TABLE group_memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL
+          CHECK (kind IN ('fact', 'person', 'norm', 'alias', 'admin')),
+        mem_key TEXT NOT NULL,
+        content TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.7,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(group_id, kind, mem_key)
+      );
+      CREATE INDEX idx_group_memories_group ON group_memories(group_id);
+      CREATE INDEX idx_group_memories_kind ON group_memories(group_id, kind);
+    `,
+  },
+  {
+    name: '017_jobs_memory_consolidate',
+    sql: `
+      CREATE TABLE jobs_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL
+          CHECK (type IN (
+            'summary', 'pdf_extract', 'pdf_analyze', 'schedule_detect',
+            'reminder', 'retention', 'chat_reply', 'memory_consolidate'
+          )),
+        payload_ref TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'running', 'completed', 'failed', 'retrying', 'failed_final')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 3,
+        run_after TEXT,
+        idempotency_key TEXT NOT NULL,
+        error_class TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
+      INSERT INTO jobs_new (
+        id, type, payload_ref, status, attempts, max_attempts, run_after,
+        idempotency_key, error_class, error_message, created_at, updated_at, completed_at
+      )
+      SELECT
+        id, type, payload_ref, status, attempts, max_attempts, run_after,
+        idempotency_key, error_class, error_message, created_at, updated_at, completed_at
+      FROM jobs;
+      DROP TABLE jobs;
+      ALTER TABLE jobs_new RENAME TO jobs;
+      CREATE UNIQUE INDEX idx_jobs_idempotency ON jobs(idempotency_key);
+      CREATE INDEX idx_jobs_status ON jobs(status);
+      CREATE INDEX idx_jobs_type ON jobs(type);
+      CREATE INDEX idx_jobs_run_after ON jobs(run_after);
+    `,
+  },
 ];
