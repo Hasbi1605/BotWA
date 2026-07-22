@@ -216,26 +216,41 @@ async function handleMode(
   );
 }
 
+const LC_ON_REPLIES = [
+  'Haloo, ada yang bisa kubantu? Atau cuma mau ditemenin ngobrol doang wkwk.',
+  'Halo teman2, gimana harinya? Gua nyalain mode cerewet ya — siap di-roasting pelan-pelan 🔥',
+  'Oke gas, LC on. Jangan kaget kalau gua nyaut tiap chat, bukan hantu, emang sengaja.',
+  'Yoh, gua masuk chat. Siapa yang drama hari ini? Spill, biar gua bantu + nyindir dikit.',
+  'Siap tuan, mode usil aktif. Tag gua enggak perlu, tinggal ngetik aja — tapi jangan spam "siap" doang ya.',
+  'Halo halo, botnya udah bangun. Ada PR KKN, drama grup, atau cuma pengen dibully sayang?',
+  'LC nyalaa. Anggap aja gua temen yang kepoin chat grup — helpful, tapi mulutnya agak kurang ajar wkwk.',
+  'Hadir! Siapa manggil? Oh iya enggak ada yang manggil, gua yang maksa ikut ngobrol. Halo guys 👋',
+  'Mode loss control: ON. Gua dengerin semuanya. Santai aja, asal jangan ngarep jawaban formal kayak CS bank.',
+  'Yoh, waktunya gua ikut ngerumpi. Ada yang bisa dibantu, atau mau dengerin roasting gratis dulu?',
+];
+
+const LC_OFF_REPLIES = [
+  'Siap tuan, saya izin tidur. Jangan kangen berisik dulu ya 😴',
+  'Siap, saya pamitan dulu ya guys. Sampai jumpa lain waktu~',
+  'Oke, gua mute dulu. Chat kalian lanjut tanpa komentator iseng wkwk. Bye 👋',
+  'LC off. Gua cabut dari drama harian dulu — ringkasan & PDF tetep jalan, santai.',
+  'Siap, mode diam. Kalau butuh gua lagi, bilang *lc on*. Jangan kangen mulu.',
+  'Yoh, gua undur diri dulu. Semoga proker lancar, jangan cuma "siap" doang pas gua tidur.',
+  'Pamit ya. Gua off dulu biar kalian bisa serius… atau berantem tanpa saksi wkwk.',
+  'Siap, LC mati. Gua jadi bayangan aja — rekam chat, ringkas, jangan diganggu dulu.',
+  'Oke gas, gua sleep mode. Bangunin pakai *lc on* kalau rindu diroasting.',
+  'Dadah~ Gua off. Yang nge-spam chat malam-malam, tenang, gua lagi purel tidur.',
+];
+
+function pickRandom(lines: string[]): string {
+  return lines[Math.floor(Math.random() * lines.length)]!;
+}
+
 async function handleLc(ctx: CommandContext, on: boolean): Promise<void> {
   const next = on ? 'lc' : 'silent';
   groupsRepo.setReplyMode(ctx.group.id, next);
   ctx.group.reply_mode = next;
-  if (on) {
-    await sendMessage(
-      ctx.sock,
-      ctx.group.jid,
-      `🔥 *Loss Control (LC) ON*\n\n` +
-        `Bot akan *membalas chat grup* (bukan cuma admin/command) — gaya helpful, lucu, sedikit roasting.\n` +
-        `Tidak perlu tag bot. Memori grup dipakai biar makin kenal.\n\n` +
-        `_Rate-limit aktif biar tidak banjir._ Matikan: *lc off*`
-    );
-  } else {
-    await sendMessage(
-      ctx.sock,
-      ctx.group.jid,
-      `🤫 *LC OFF* — bot kembali diam di chat biasa.\nRingkasan otomatis & PDF tetap jalan.\nNyalakan lagi: *lc on*`
-    );
-  }
+  await sendMessage(ctx.sock, ctx.group.jid, pickRandom(on ? LC_ON_REPLIES : LC_OFF_REPLIES));
 }
 
 async function handleMemoryStatus(ctx: CommandContext): Promise<void> {
