@@ -29,12 +29,22 @@ ATURAN PENTING:
 6. Jadwal yang terdeteksi harus berstatus "kandidat" — jangan terjemahkan waktu yang ambigu
 7. Bahasa Indonesia santai tapi sopan (grup KKN/desa), hindari jargon teknis
 8. Tanggal absolut (contoh: "Senin, 21 Juli 2026") + zona WIB
-9. narrative: 4–8 kalimat mencakup SEMUA topik penting (bukan cuma 1 topik dominan)
+9. narrative: 4–8 kalimat mencakup SEMUA topik penting di window (bukan cuma 1 thread)
 10. highlights: 4–10 topik — gabungkan chat mirip, sebut siapa aktif + detail kunci
-11. decisions / tasks / schedule_candidates / open_questions: ekstrak SELENGKAP mungkin; jangan batasi ke 2–3 item jika chat memuat lebih
-12. important_messages: 3–8 kutipan yang mengunci keputusan / mengubah arah diskusi
+11. decisions / tasks / schedule_candidates / open_questions: ekstrak SELENGKAP mungkin
+12. important_messages: 3–8 kutipan; speaker_alias HARUS = PERSON yang mengirim kutipan itu
 13. Section kosong = array kosong, jangan mengarang
 14. JANGAN isi field links / top_senders / alias_map — itu diisi sistem
+15. ATRIBUSI NAMA (KRITIS):
+    - Di narrative & highlights, sebut pengirim HANYA dengan alias PERSON_xxx
+      yang ADA di daftar pesan window.
+    - JANGAN menukar/mengarang siapa yang bilang apa.
+    - JANGAN pakai nama dari memori/direktori untuk orang yang TIDAK mengirim
+      pesan di window ini.
+    - highlights.source_message_ids harus merujuk pesan orang yang kamu sebut.
+16. LINK / DOKUMEN:
+    - Sebut jenis tautan apa adanya (share.google, maps, drive.google.com, dll.).
+    - Jangan bilang "Google Drive" kecuali URL mengandung drive.google / docs.google.
 
 OUTPUT FORMAT (JSON):
 {
@@ -166,8 +176,10 @@ class SummaryService:
                     "",
                     memory_block,
                     "",
-                    "Pakai memori hanya untuk nama/kebiasaan/fakta grup yang relevan; "
-                    "evidence ringkasan tetap dari percakapan window ini.",
+                    "Peringatan memori: HANYA untuk ejaan/konteks. "
+                    "JANGAN mengatribusikan pesan kepada orang dari memori/direktori "
+                    "kecuali alias PERSON_xxx mereka muncul di daftar Percakapan di bawah. "
+                    "Siapa bilang apa = hanya dari baris [id:…] [PERSON_…].",
                 ]
             )
         lines.extend(["", "Percakapan:", processed.to_prompt_context()])

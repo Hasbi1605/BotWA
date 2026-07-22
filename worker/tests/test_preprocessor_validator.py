@@ -131,3 +131,22 @@ def test_validator_blocks_inexact_quotes():
     )
     assert result.can_publish is False
     assert any("Quote not found" in error for error in result.errors)
+
+
+def test_validator_blocks_person_alias_not_in_window():
+    result = SummaryValidator().validate(
+        _output(
+            narrative="PERSON_099 bilang bersih-bersih posko.",
+            highlights=[],
+        ),
+        _processed_messages(),
+    )
+    assert result.can_publish is False
+    assert any("PERSON_099" in e for e in result.errors)
+
+
+def test_validator_soft_fixes_google_drive_mislabel():
+    out = _output(documents=["Link Google Drive dibagikan"])
+    result = SummaryValidator().validate(out, _processed_messages())
+    assert result.can_publish is True
+    assert "drive" not in out.documents[0].lower() or "tautan" in out.documents[0].lower()

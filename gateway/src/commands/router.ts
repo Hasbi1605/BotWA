@@ -493,10 +493,13 @@ async function handleSummaryNow(ctx: CommandContext): Promise<void> {
   const summariesRepo = await import('../db/repositories/summaries.repo.js');
   const { DateTime } = await import('luxon');
 
+  const { toUtcIso } = await import('../util/time.js');
   const now = DateTime.now().setZone('Asia/Jakarta');
   const lastSummary = summariesRepo.getLastCompleted(ctx.group.id);
-  const startAt = lastSummary?.end_at || now.minus({ hours: 12 }).toISO();
-  const endAt = now.toISO();
+  const startAt = lastSummary?.end_at
+    ? toUtcIso(lastSummary.end_at)
+    : toUtcIso(now.minus({ hours: 12 }));
+  const endAt = toUtcIso(now);
 
   const summary = summariesRepo.create({
     group_id: ctx.group.id,

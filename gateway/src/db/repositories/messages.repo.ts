@@ -1,4 +1,5 @@
 import { getDb } from '../index.js';
+import { toUtcIso } from '../../util/time.js';
 
 export interface Message {
   id: number;
@@ -41,13 +42,16 @@ export function insert(data: {
 
 export function findByGroupAndTimeRange(groupId: number, startAt: string, endAt: string): Message[] {
   const db = getDb('');
+  // Normalize bounds to UTC Z so lexicographic compare matches stored message timestamps
+  const start = toUtcIso(startAt);
+  const end = toUtcIso(endAt);
   return db.prepare(
     `SELECT m.*, p.display_name, p.wa_jid_hmac
      FROM messages m
      JOIN participants p ON p.id = m.participant_id
      WHERE m.group_id = ? AND m.timestamp >= ? AND m.timestamp < ? AND m.deleted_at IS NULL
      ORDER BY m.timestamp ASC`
-  ).all(groupId, startAt, endAt) as Message[];
+  ).all(groupId, start, end) as Message[];
 }
 
 export function findById(id: number): Message | undefined {

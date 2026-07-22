@@ -5,6 +5,7 @@ import type { Config } from '../config/index.js';
 import * as groupsRepo from '../db/repositories/groups.repo.js';
 import * as summariesRepo from '../db/repositories/summaries.repo.js';
 import * as jobsRepo from '../db/repositories/jobs.repo.js';
+import { toUtcIso } from '../util/time.js';
 import pino from 'pino';
 
 const logger = pino({ name: 'scheduler' });
@@ -80,8 +81,9 @@ function createSummaryWindows(period: 'morning' | 'evening', tz: string): void {
     endAt = now.set({ hour: 20, minute: 0, second: 0, millisecond: 0 });
   }
 
-  const startISO = startAt.toISO()!;
-  const endISO = endAt.toISO()!;
+  // Always UTC Z — matches message.timestamp from normalizer (Date.toISOString)
+  const startISO = toUtcIso(startAt);
+  const endISO = toUtcIso(endAt);
 
   const activeGroups = groupsRepo.listActive();
   logger.info({ period, groups: activeGroups.length, start: startISO, end: endISO }, 'Creating summary windows');
